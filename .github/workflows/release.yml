@@ -1,7 +1,7 @@
 name: Release
 
 # 发布链路（与 jellyfin-plugin-faststrm 一致）：
-#   tag v*  →  校验版本号  →  测试 + 双 ABI 打包  →  上传 GitHub Release  →  回写 manifest.json 到 main
+#   tag v*  →  校验版本号  →  测试 + 打包  →  上传 GitHub Release  →  回写 manifest.json 到 main
 # 插件包托管在 Release 资产上，清单走 raw.githubusercontent.com，不使用 GitHub Pages。
 on:
   push:
@@ -33,9 +33,7 @@ jobs:
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            9.0.x
-            10.0.x
+          dotnet-version: '10.0.x'
 
       - name: Resolve and Verify Version
         id: version
@@ -64,11 +62,10 @@ jobs:
           PROPS_VER=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props | head -n1)
           META_VER=$(grep -oP '(?<="version": ")[^"]+' meta.json | head -n1)
           BUILD_VER=$(grep -oP '(?<=^version: ")[^"]+' build.yaml | head -n1)
-          BUILD12_VER=$(grep -oP '(?<=^version: ")[^"]+' build.12.yaml | head -n1)
 
-          echo "tag=${TAG_NAME} clean=${CLEAN_VER} props=${PROPS_VER} meta=${META_VER} build=${BUILD_VER} build12=${BUILD12_VER}"
+          echo "tag=${TAG_NAME} clean=${CLEAN_VER} props=${PROPS_VER} meta=${META_VER} build=${BUILD_VER}"
 
-          for pair in "Directory.Build.props:${PROPS_VER}" "meta.json:${META_VER}" "build.yaml:${BUILD_VER}" "build.12.yaml:${BUILD12_VER}"; do
+          for pair in "Directory.Build.props:${PROPS_VER}" "meta.json:${META_VER}" "build.yaml:${BUILD_VER}"; do
             file="${pair%%:*}"
             value="${pair#*:}"
             norm_val=$(normalize "$value")
@@ -84,7 +81,7 @@ jobs:
       - name: Test
         run: dotnet test Jellyfin.Plugin.Ratings.sln -c Release --nologo
 
-      - name: Package plugin zips
+      - name: Package plugin zip
         env:
           VERSION: ${{ steps.version.outputs.clean }}
         run: bash build.sh
@@ -96,14 +93,12 @@ jobs:
           set -e
 
           mkdir -p release-assets
-          for slug in jf10.11 jf12; do
-            src="dist/ratings-${slug}.zip"
-            if [ ! -f "$src" ]; then
-              echo "::error::构建产物 ${src} 不存在"
-              exit 1
-            fi
-            cp "$src" "release-assets/ratings-${FULL_VER}-${slug}.zip"
-          done
+          src="dist/ratings-jf12.zip"
+          if [ ! -f "$src" ]; then
+            echo "::error::构建产物 ${src} 不存在"
+            exit 1
+          fi
+          cp "$src" "release-assets/ratings-${FULL_VER}-jf12.zip"
 
           ls -lh release-assets
 

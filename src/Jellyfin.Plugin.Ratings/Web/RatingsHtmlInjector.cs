@@ -92,10 +92,8 @@ public sealed class RatingsHtmlInjector
             if (Interlocked.Exchange(ref _loggedActive, 1) == 0)
             {
                 _logger.LogInformation(
-                    "[Ratings] 脚本注入已生效：宿主 {ServerVersion}（{Framework}），Jellyfin 12 分支={IsV12}",
-                    JellyfinCompat.ServerVersion,
-                    JellyfinCompat.TargetFramework,
-                    JellyfinCompat.IsV12OrLater);
+                    "[Ratings] 脚本注入已生效：宿主 {ServerVersion}",
+                    JellyfinCompat.ServerVersion);
             }
         }
         catch (Exception ex)

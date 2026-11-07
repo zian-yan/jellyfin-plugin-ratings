@@ -1,6 +1,6 @@
 # Jellyfin Ratings 插件
 
-把原先的浏览器用户脚本 `jellyfin_ratings_v2.js` 重构成**原生 Jellyfin 服务端插件**，同时兼容 **Jellyfin 10.11（net9.0）** 与 **Jellyfin 12（net10.0）**。
+把原先的浏览器用户脚本 `jellyfin_ratings_v2.js` 重构成**原生 Jellyfin 服务端插件**，目标 **Jellyfin 12（net10.0）**。
 
 
 ---
@@ -55,25 +55,24 @@
 ---
 ## 7. 构建
 
-需要 .NET SDK 10（`global.json` 锁 `10.0.100` + `latestFeature`，可同时编译 `net9.0` 与 `net10.0`）。
+需要 .NET SDK 10（`global.json` 锁 `10.0.100` + `latestFeature`）。
 
 ```bash
-# 还原 + 编译（解决方案级，一次产出两个 TFM）
+# 还原 + 编译
 dotnet restore Jellyfin.Plugin.Ratings.sln
 dotnet build   Jellyfin.Plugin.Ratings.sln -c Release
 
 # 单元测试（xunit，21 个用例：注入中间件含 gzip、嵌入资源、缓存/熔断、JSON 契约）
 dotnet test Jellyfin.Plugin.Ratings.sln -c Release
 
-# 一键产出两个插件包
+# 一键产出插件包
 bash build.sh
-#  → dist/ratings-jf10.11.zip  (net9.0,  targetAbi 10.11.0.0)
-#  → dist/ratings-jf12.zip     (net10.0, targetAbi 12.0.0.0)
+#  → dist/ratings-jf12.zip  (net10.0, targetAbi 12.0.0.0)
 ```
 
 `build.sh` 只负责出包，不改清单；发布走 tag（见 [8.2.1](#821-发布新版本)）。
 
-只编译单个目标（调试用）：
+只编译（调试用）：
 
 ```bash
 dotnet build src/Jellyfin.Plugin.Ratings -c Debug -f net10.0
@@ -82,11 +81,10 @@ dotnet build src/Jellyfin.Plugin.Ratings -c Debug -f net10.0
 用 jprm 走官方仓库流程时（可选）：
 
 ```bash
-jprm plugin build --spec build.yaml      # 10.11
-jprm plugin build --spec build.12.yaml   # 12
+jprm plugin build --spec build.yaml   # Jellyfin 12
 ```
 
-> 当前验证状态：解决方案整体 `0 warning / 0 error`；`Jellyfin.Plugin.Ratings.dll` 的引用经反射确认分别是 `MediaBrowser.Controller 10.11.11.0` 与 `12.4.0.0`；`dotnet test` 21/21 通过。**尚未**在真实 Jellyfin 实例上做端到端点击验证（见第 10 节）。
+> 当前验证状态：解决方案整体 `0 warning / 0 error`；`Jellyfin.Plugin.Ratings.dll` 的引用经反射确认是 `MediaBrowser.Controller 12.4.0.0`；`dotnet test` 21/21 通过。**尚未**在真实 Jellyfin 实例上做端到端点击验证。
 
 ---
 
@@ -94,11 +92,9 @@ jprm plugin build --spec build.12.yaml   # 12
 
 ### 8.1 手动安装（推荐，最稳）
 
-1. 选对包（从 [Releases](https://github.com/zian-yan/jellyfin-plugin-ratings/releases) 下载对应 zip）：
-   - Jellyfin **10.11.x** → `ratings-1.0.0.0-jf10.11.zip`
-   - Jellyfin **12.x** → `ratings-1.0.0.0-jf12.zip`
+1. 下载 `ratings-1.0.0.0-jf12.zip`（[Releases](https://github.com/zian-yan/jellyfin-plugin-ratings/releases)）。需要 **Jellyfin 12.x**；10.11 及更早版本不再支持。
 
-   自己编译也行：`bash build.sh` 产出同样内容的 `dist/ratings-jf10.11.zip` / `dist/ratings-jf12.zip`。
+   自己编译也行：`bash build.sh` 产出同样内容的 `dist/ratings-jf12.zip`。
 2. 解压到插件目录，目录名建议带版本号：
 
    ```
@@ -139,13 +135,12 @@ https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/manifest
 4. 按提示重启 Jellyfin
 5. 控制台 → 插件 → Ratings → 设置，填 API Key 后保存
 
-插件会自动按你的服务器版本挑包：
+插件只发 Jellyfin 12（net10.0）一个包，清单里每个版本只有一条记录，无需按服务器版本挑包：
 
-| 你的 Jellyfin | 安装到的包 |
+| 你的 Jellyfin | 结果 |
 | --- | --- |
-| 10.11.x | `net9.0` 包（targetAbi 10.11.0.0） |
-| 12.x | `net10.0` 包（targetAbi 12.0.0.0） |
-| ≤ 10.10 | 列表里不显示（不支持） |
+| 12.x | 显示 Ratings，可安装 |
+| ≤ 10.11 | 列表里不显示（不支持） |
 
 > `raw.githubusercontent.com` 访问不稳定时，可改用 jsDelivr 镜像（缓存约 12 小时）：
 > `https://cdn.jsdelivr.net/gh/zian-yan/jellyfin-plugin-ratings@main/manifest.json`
@@ -162,35 +157,29 @@ https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/manifest
     "name": "Ratings",
     "imageUrl": "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/assets/icon.png",
     "versions": [
-      { "version": "1.0.0.0", "targetAbi": "12.0.0.0",  "sourceUrl": "https://github.com/zian-yan/jellyfin-plugin-ratings/releases/download/v1.0.0/ratings-1.0.0.0-jf12.zip",    "checksum": "f117…", "timestamp": "…" },
-      { "version": "1.0.0.0", "targetAbi": "10.11.0.0", "sourceUrl": "https://github.com/zian-yan/jellyfin-plugin-ratings/releases/download/v1.0.0/ratings-1.0.0.0-jf10.11.zip", "checksum": "2726…", "timestamp": "…" }
+      { "version": "1.0.0.0", "targetAbi": "12.0.0.0", "sourceUrl": "https://github.com/zian-yan/jellyfin-plugin-ratings/releases/download/v1.0.0/ratings-1.0.0.0-jf12.zip", "checksum": "f117…", "timestamp": "…" }
     ]
   }
 ]
 ```
-
-**`versions` 的顺序不能调换**：Jellyfin 的选版逻辑是「先过滤 `TargetAbi ≤ 服务器版本`，再按版本号降序取第一条」
-（`InstallationManager.GetPackageVersions`）。两个 ABI 版本号相同，`OrderByDescending` 又是稳定排序，
-所以 12 的条目必须写在前面 —— 10.11 服务器会把 12 条目过滤掉，12 服务器则两条都通过、先命中 12 条目。
 
 ### 8.2.1 发布新版本
 
 只打 tag，构建、打包、发 Release、回写清单全部由 `.github/workflows/release.yml` 完成：
 
 ```bash
-# 1. 改版本号（以下 4 处必须一致，workflow 会校验，不一致直接 fail）
+# 1. 改版本号（以下 3 处必须一致，workflow 会校验，不一致直接 fail）
 #    Directory.Build.props   <Version>1.0.1</Version>
 #    meta.json               "version": "1.0.1.0"
 #    build.yaml              version: "1.0.1.0"
-#    build.12.yaml           version: "1.0.1.0"
 # 2. 在 CHANGELOG.md 里加 `## [1.0.1]` 段落（Release 说明与清单 changelog 都取自它）
 git commit -am "release: 1.0.1"
 git tag -a v1.0.1 -m "Ratings v1.0.1"
 git push origin main && git push origin v1.0.1   # 推 tag 即触发发布
 ```
 
-workflow 依次执行：校验版本 → `dotnet test` → `build.sh` 出两个 zip → 重命名为
-`ratings-1.0.1.0-jf10.11.zip` / `ratings-1.0.1.0-jf12.zip` 上传 Release → 运行
+workflow 依次执行：校验版本 → `dotnet test` → `build.sh` 出 zip → 重命名为
+`ratings-1.0.1.0-jf12.zip` 上传 Release → 运行
 `scripts/update_manifest.py` 把新版本（含 MD5）写入 `manifest.json` 并提交回 `main`。
 
 几个容易踩的点：
@@ -198,7 +187,7 @@ workflow 依次执行：校验版本 → `dotnet test` → `build.sh` 出两个 
 - **版本号归一化**：tag 只写三段（`v1.0.1`），文件里写 `1.0.1` 或 `1.0.1.0` 都可以，脚本会自动补第四段。
 - **`CHANGELOG.md` 缺对应段落不会失败**：只会 warning，Release 说明退化为 `v1.0.1`。
 - **漏触发可手动补**：Actions → `Release` → **Run workflow**，填 `tag_name`（如 `v1.0.1`）。
-- **不要手改清单里的旧条目**：脚本只做「删掉同版本同 ABI 旧条目 → 插入新条目 → 按版本降序 + 12 在前重排」。
+- **不要手改清单里的旧条目**：脚本只做「删掉同版本旧条目 → 插入新条目 → 按版本降序重排」。
 - Jellyfin 端在「插件 → 目录」会看到新版本，点更新即可；旧包名带版本号，不会互相覆盖。
 - `main` 上的提交会触发 `build.yml` 做常规 CI（只验证编译与测试），发布逻辑只在 tag 上跑，两者不冲突。
 
@@ -242,11 +231,11 @@ Info   [Ratings] 缓存维护完成，清理 12 条，剩余 301 条
 
 ## 10. 已知限制
 
-1. **未在真实实例上做端到端点击验证**。已完成：双 TFM 编译、程序集引用核对、`dotnet test` 21 项用例（注入/压缩/嵌入资源/缓存/熔断/JSON 契约）。首次上机请按 8.1 第 7 步核对 `health`。
+1. **未在真实实例上做端到端点击验证**。已完成：net10.0 编译、程序集引用核对、`dotnet test` 21 项用例（注入/压缩/嵌入资源/缓存/熔断/JSON 契约）。首次上机请按 8.1 第 7 步核对 `health`。
 2. **前端 DOM 依赖 Jellyfin Web 结构**（`.itemMiscInfo.itemMiscInfo-primary`、`.mediaInfoItem`）。Jellyfin 12 若整体换用新 UI 框架，`client.js` 的选择器需同步调整 —— 服务端接口不受影响。
 3. **豆瓣 / AlloCiné / 烂番茄 均为页面解析**，对方改版即失效；这类来源默认关闭，失败只影响自身。
-4. **`IStartupFilter` 注入依赖宿主在构建 Host 前收集插件服务**，10.11/12 的官方启动流程满足该前提；若被第三方启动器改写，按 8.3 降级。
-5. **不支持 10.10 及更早版本**（`BasePlugin` 构造签名不同）。
+4. **`IStartupFilter` 注入依赖宿主在构建 Host 前收集插件服务**，Jellyfin 12 的官方启动流程满足该前提；若被第三方启动器改写，按 8.3 降级。
+5. **仅支持 Jellyfin 12**；10.11 及更早版本不再提供包（`BasePlugin` 构造签名与目标 ABI 均不同）。
 6. 评分只做展示，不写回 `BaseItem.CriticRating`/`CommunityRating`，因此**排序/筛选仍按 Jellyfin 原生评分**。需要改元数据的场景应走 Provider 插件而非本插件。
 
 ---

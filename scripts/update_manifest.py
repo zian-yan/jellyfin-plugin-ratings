@@ -2,26 +2,18 @@
 """把刚发布的版本写入仓库根 manifest.json。
 
 发布链路（.github/workflows/release.yml）：
-    tag v1.0.1  →  构建双 ABI zip  →  上传 GitHub Release  →  运行本脚本  →  提交 manifest.json
+    tag v1.0.1  →  构建 zip  →  上传 GitHub Release  →  运行本脚本  →  提交 manifest.json
 
 输入
     meta.json                 插件元数据（name / description / overview / owner / category）
     Directory.Build.props      版本号唯一来源（<Version>）
     RELEASE_NOTES.md           本次发布的更新说明，写入 manifest 的 changelog
-    dist/*.zip                 即将上传的插件包，用于计算 MD5
+    dist/ratings-jf12.zip      即将上传的插件包，用于计算 MD5
 
 环境变量
     RELEASE_TAG   必填，形如 v1.0.1
     REPO_SLUG     可选，默认 zian-yan/jellyfin-plugin-ratings
     IMAGE_URL     可选，默认取仓库 assets/icon.png 的 raw 地址
-
-关于版本排序（重要）
-    Jellyfin 选版见 Emby.Server.Implementations/Updates/InstallationManager.cs
-      1) 过滤 targetAbi <= 当前服务器版本
-      2) availableVersions.OrderByDescending(VersionNumber)，取第一条
-    OrderBy 是稳定排序，两个 ABI 的版本号相同，manifest 内的先后顺序即结果。
-    所以同一版本必须 12.x 在前、10.11 在后：10.11 服务器会把 12 条目过滤掉，
-    12 服务器则两条都通过，此时先命中的 12 条目生效。
 
 用法
     RELEASE_TAG=v1.0.1 python3 scripts/update_manifest.py [--dry-run]
@@ -43,14 +35,10 @@ NOTES = os.path.join(ROOT, "RELEASE_NOTES.md")
 
 REPO_SLUG = os.environ.get("REPO_SLUG", "zian-yan/jellyfin-plugin-ratings")
 
-# (slug, dist 内 zip 名, targetAbi, 排序权重)
-TARGETS = [
-    ("jf12", "ratings-jf12.zip", "12.0.0.0", 1200),
-    ("jf10.11", "ratings-jf10.11.zip", "10.11.0.0", 1011),
-]
-
-# targetAbi -> 同版本内的先后权重（越大越靠前）
-ABI_WEIGHT = {target_abi: weight for _, _, target_abi, weight in TARGETS}
+# 唯一支持的 Jellyfin ABI：12.x（net10.0）
+TARGET_ABI = "12.0.0.0"
+SLUG = "jf12"
+ZIP_NAME = "ratings-jf12.zip"
 
 
 def read_version() -> str:
@@ -97,32 +85,30 @@ def build_plugin(slug_tag: str, version: str, changelog: str) -> dict:
     with open(META, encoding="utf-8") as fh:
         meta = json.load(fh)
 
-    entries = []
-    for slug, zip_name, target_abi, _weight in TARGETS:
-        src = os.path.join(DIST, zip_name)
-        if not os.path.isfile(src):
-            raise SystemExit(f"缺少插件包 {src}，请先运行 bash build.sh")
+    src = os.path.join(DIST, ZIP_NAME)
+    if not os.path.isfile(src):
+        raise SystemExit(f"缺少插件包 {src}，请先运行 bash build.sh")
 
-        entries.append(
-            {
-                "version": version,
-                "changelog": changelog,
-                "targetAbi": target_abi,
-                "sourceUrl": (
-                    f"https://github.com/{REPO_SLUG}/releases/download/"
-                    f"{slug_tag}/ratings-{version}-{slug}.zip"
-                ),
-                "checksum": md5_of(src),
-                "timestamp": datetime.now(timezone.utc)
-                .replace(microsecond=0)
-                .strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
-        )
-        print(f"  ratings-{version}-{slug}.zip  md5={entries[-1]['checksum']}")
+    checksum = md5_of(src)
+    print(f"  ratings-{version}-{SLUG}.zip  md5={checksum}")
 
     image_url = os.environ.get("IMAGE_URL") or (
         f"https://raw.githubusercontent.com/{REPO_SLUG}/main/assets/icon.png"
     )
+
+    entry = {
+        "version": version,
+        "changelog": changelog,
+        "targetAbi": TARGET_ABI,
+        "sourceUrl": (
+            f"https://github.com/{REPO_SLUG}/releases/download/"
+            f"{slug_tag}/ratings-{version}-{SLUG}.zip"
+        ),
+        "checksum": checksum,
+        "timestamp": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
 
     return {
         "guid": meta["guid"],
@@ -132,7 +118,7 @@ def build_plugin(slug_tag: str, version: str, changelog: str) -> dict:
         "owner": meta.get("owner") or REPO_SLUG.split("/")[0],
         "category": meta.get("category", "General"),
         "imageUrl": image_url,
-        "versions": entries,
+        "versions": [entry],
     }
 
 
@@ -159,22 +145,19 @@ def main() -> int:
 
     existing = load_existing()
     plugin = existing[0] if existing else {}
+    fresh_targets = {entry["targetAbi"] for entry in fresh["versions"]}
     kept = [
         item
         for item in plugin.get("versions", [])
-        if (item.get("version"), item.get("targetAbi"))
+        # 只保留当前仍支持的 ABI；同版本同 ABI 的旧条目会被新条目覆盖
+        if item.get("targetAbi") in fresh_targets
+        and (item.get("version"), item.get("targetAbi"))
         not in {(entry["version"], entry["targetAbi"]) for entry in fresh["versions"]}
     ]
 
     merged = fresh["versions"] + kept
-    # 版本降序；同版本按 targetAbi 权重降序（12 在 10.11 之前，见文件头说明）
-    merged.sort(
-        key=lambda item: (
-            version_key(item.get("version", "0")),
-            ABI_WEIGHT.get(item.get("targetAbi"), 0),
-        ),
-        reverse=True,
-    )
+    # 版本降序（同一 ABI 只会有一个版本，无需再按 ABI 排序）
+    merged.sort(key=lambda item: version_key(item.get("version", "0")), reverse=True)
 
     fresh["versions"] = merged
 

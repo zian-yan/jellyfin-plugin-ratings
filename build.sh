@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# 一键构建双版本插件包：
-#   dist/ratings-jf10.11.zip   -> Jellyfin 10.11.x (net9.0)
-#   dist/ratings-jf12.zip      -> Jellyfin 12.x    (net10.0)
+# 一键构建插件包：
+#   dist/ratings-jf12.zip   -> Jellyfin 12.x (net10.0)
 #
-# 只负责出包。发版由 .github/workflows/release.yml 完成：它把这两个 zip 重命名成
-# ratings-<version>-<slug>.zip 上传到 Release，并回写仓库根 manifest.json。
+# 只负责出包。发版由 .github/workflows/release.yml 完成：它把这个 zip 重命名成
+# ratings-<version>-jf12.zip 上传到 Release，并回写仓库根 manifest.json。
 #
 # 用法：
 #   bash build.sh                 # 版本号取 Directory.Build.props
@@ -33,20 +32,22 @@ else
   exit 1
 fi
 
+FRAMEWORK="net10.0"
+ABI="12.0.0.0"
+SLUG="jf12"
+WORK="$OUT/work-$SLUG"
+
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-package() {
-  local framework="$1" abi="$2" slug="$3" work="$OUT/work-$3"
+echo "==> 构建 $FRAMEWORK (targetAbi $ABI)"
+rm -rf "$WORK" && mkdir -p "$WORK"
+dotnet publish "$PROJ" -c Release -f "$FRAMEWORK" -o "$WORK" --nologo -v q
 
-  echo "==> 构建 $framework (targetAbi $abi)"
-  rm -rf "$work" && mkdir -p "$work"
-  dotnet publish "$PROJ" -c Release -f "$framework" -o "$work" --nologo -v q
+# 插件包只需要程序集与 meta.json，deps.json 会干扰宿主加载
+rm -f "$WORK"/*.deps.json
 
-  # 插件包只需要程序集与 meta.json，deps.json 会干扰宿主加载
-  rm -f "$work"/*.deps.json
-
-  cat > "$work/meta.json" <<EOF
+cat > "$WORK/meta.json" <<EOF
 {
   "category": "General",
   "guid": "$GUID",
@@ -54,7 +55,7 @@ package() {
   "description": "$DESCRIPTION",
   "overview": "$OVERVIEW",
   "owner": "",
-  "targetAbi": "$abi",
+  "targetAbi": "$ABI",
   "version": "$VERSION.0",
   "status": "Active",
   "autoUpdate": false,
@@ -62,7 +63,7 @@ package() {
 }
 EOF
 
-  "$PY" - "$work" "$OUT/ratings-$slug.zip" <<'PY'
+"$PY" - "$WORK" "$OUT/ratings-$SLUG.zip" <<'PY'
 import os, sys, zipfile
 src, dst = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -73,11 +74,7 @@ with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
 print(f"    packed {dst} ({os.path.getsize(dst)} bytes)")
 PY
 
-  rm -rf "$work"
-}
-
-package "net9.0"  "10.11.0.0" "jf10.11"
-package "net10.0" "12.0.0.0"  "jf12"
+rm -rf "$WORK"
 
 echo
 echo "完成（版本 $VERSION）："

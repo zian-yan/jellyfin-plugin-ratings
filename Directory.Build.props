@@ -2,7 +2,7 @@
 
   <!--
     解决方案级公共属性。子项目 inherit 这些设置，避免每个 csproj 重复声明。
-    Jellyfin 双版本 ABI 的包版本集中在这里，升级时只改一处。
+    Jellyfin 12 ABI 的包版本集中在这里，升级时只改一处。
   -->
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
@@ -20,10 +20,9 @@
     <Product>Jellyfin Ratings</Product>
   </PropertyGroup>
 
-  <!-- Jellyfin 目标框架 → 包版本映射（10.11 用 net9.0，12.x 用 net10.0） -->
+  <!-- Jellyfin 12.x → net10.0 引用的 NuGet 包版本 -->
   <PropertyGroup>
-    <JellyfinAbi10Version>10.11.11</JellyfinAbi10Version>
-    <JellyfinAbi12Version>12.4.0</JellyfinAbi12Version>
+    <JellyfinAbiVersion>12.4.0</JellyfinAbiVersion>
   </PropertyGroup>
 
 </Project>

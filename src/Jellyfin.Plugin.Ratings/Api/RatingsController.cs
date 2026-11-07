@@ -18,8 +18,7 @@ namespace Jellyfin.Plugin.Ratings.Api;
 
 /// <summary>
 /// 对外 REST 接口。全部使用 [ApiController] + ControllerBase（Microsoft.AspNetCore.Mvc），
-/// 不继承 Jellyfin.Api 内的基类 —— 该基类在 10.11 与 12 之间发生过移动，
-/// 这是本插件能做到「一次编译、双版本可装」的关键。
+/// 不依赖 Jellyfin.Api 内的基类，避免宿主内部 API 变动影响路由。
 /// </summary>
 [ApiController]
 [Route("Ratings")]
@@ -210,8 +209,7 @@ public class RatingsController : ControllerBase
             plugin = "Jellyfin.Plugin.Ratings",
             version = typeof(Plugin).Assembly.GetName().Version?.ToString(),
             serverVersion = JellyfinCompat.ServerVersion.ToString(),
-            isV12 = JellyfinCompat.IsV12OrLater,
-            targetFramework = JellyfinCompat.TargetFramework,
+            targetFramework = "net10.0",
             injectionActive = RatingsRuntimeState.InjectionActive,
             webInjectionEnabled = config.EnableWebInjection,
             cacheEntries = _aggregator.Cache.Count,

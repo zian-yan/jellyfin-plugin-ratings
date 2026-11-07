@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Ratings.Sources;
 
 /// <summary>
-/// TMDb 数据源：负责单集 / 单季评分（这是 Jellyfin 10.11+ 才拿得到的数据），
+/// TMDb 数据源：负责单集 / 单季评分（依赖 Jellyfin 12 提供的分集元数据），
 /// 同时承担 IMDb ID 补齐（MDBList 用 IMDb 兜底、以及各类外链反查都需要它）。
 /// </summary>
 public sealed class TmdbSource : IRatingSource

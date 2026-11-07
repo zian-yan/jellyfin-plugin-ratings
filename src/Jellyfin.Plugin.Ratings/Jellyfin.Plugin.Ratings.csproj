@@ -1,36 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    插件主工程：双目标 net9.0 (Jellyfin 10.11) / net10.0 (Jellyfin 12)。
+    插件主工程：仅目标 Jellyfin 12（net10.0）。
     LangVersion / Nullable / 版本号等公共属性来自仓库根目录 Directory.Build.props，
-    Jellyfin 包版本来自其中的 $(JellyfinAbi10Version) / $(JellyfinAbi12Version)。
+    Jellyfin 包版本来自其中的 $(JellyfinAbiVersion)。
   -->
   <PropertyGroup>
-    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.Ratings</RootNamespace>
     <AssemblyName>Jellyfin.Plugin.Ratings</AssemblyName>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
-  <!-- Jellyfin 10.11 -> net9.0 -->
-  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
-    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinAbi10Version)">
+  <ItemGroup>
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinAbiVersion)">
       <PrivateAssets>all</PrivateAssets>
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
-    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinAbi10Version)">
-      <PrivateAssets>all</PrivateAssets>
-      <ExcludeAssets>runtime</ExcludeAssets>
-    </PackageReference>
-  </ItemGroup>
-
-  <!-- Jellyfin 12.x -> net10.0 -->
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
-    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinAbi12Version)">
-      <PrivateAssets>all</PrivateAssets>
-      <ExcludeAssets>runtime</ExcludeAssets>
-    </PackageReference>
-    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinAbi12Version)">
+    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinAbiVersion)">
       <PrivateAssets>all</PrivateAssets>
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>

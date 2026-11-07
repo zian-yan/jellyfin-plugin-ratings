@@ -6,26 +6,16 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.Ratings.Core;
 
 /// <summary>
-/// 版本兼容层。把 Jellyfin 10.11 与 12 之间存在差异的调用收敛到这一处，
-/// 业务代码只依赖这里的封装，避免在多处散落 if (version) 分支。
+/// 宿主信息与 ProviderId 读取辅助。插件仅目标 Jellyfin 12（net10.0），
+/// 不再保留多版本分支；这里只收敛「读版本号」与「安全读 ProviderId」两件事，
+/// 业务代码统一走封装，避免在多处重复 try/catch。
 /// </summary>
 public static class JellyfinCompat
 {
-    private static Version _serverVersion = new(10, 11, 0);
+    private static Version _serverVersion = new(12, 0, 0);
 
-    /// <summary>Gets 当前宿主版本，初始化失败时退化为 10.11。</summary>
+    /// <summary>Gets 当前宿主版本，初始化失败时退化为 12.0.0。</summary>
     public static Version ServerVersion => _serverVersion;
-
-    /// <summary>Gets 是否为 Jellyfin 12 及以上（net10.0 目标、新的 Provider 解析管线）。</summary>
-    public static bool IsV12OrLater => _serverVersion.Major >= 12;
-
-    /// <summary>Gets 目标框架标识，用于日志与诊断。</summary>
-    public static string TargetFramework =>
-#if NET10_0
-        "net10.0";
-#else
-        "net9.0";
-#endif
 
     internal static void Initialize(IServerApplicationHost host)
     {
@@ -43,8 +33,8 @@ public static class JellyfinCompat
     }
 
     /// <summary>
-    /// 安全读取 ProviderId。10.11 与 12 的 <see cref="IHasProviderIds.ProviderIds"/>
-    /// 都是 Dictionary，但 12 增加了 IsValidProviderId 等校验，统一走扩展方法可避免版本差异。
+    /// 安全读取 ProviderId：空值、缺失、异常一律返回 null，
+    /// 调用方无需再做 null/try-catch 处理。
     /// </summary>
     public static string? GetProviderId(BaseItem? item, MetadataProvider provider)
     {

@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Jellyfin.Plugin.Ratings;
 
 /// <summary>
-/// 向 Jellyfin 的 DI 容器注册服务。Jellyfin 10.11 / 12 均以
+/// 向 Jellyfin 的 DI 容器注册服务。Jellyfin 12 以
 /// RegisterServices(IServiceCollection, IServerApplicationHost) 为约定签名。
 /// </summary>
 public class PluginServiceRegistrator : IPluginServiceRegistrator

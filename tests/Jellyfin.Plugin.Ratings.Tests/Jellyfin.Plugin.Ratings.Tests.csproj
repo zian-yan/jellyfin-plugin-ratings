@@ -15,7 +15,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <!-- 测试需要真实加载 Jellyfin 程序集，因此保留 runtime 资产（插件本体则排除） -->
-    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinAbi12Version)" />
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinAbiVersion)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -11,9 +11,7 @@ namespace Jellyfin.Plugin.Ratings;
 /// <summary>
 /// 插件入口。
 ///
-/// 构造函数签名是 10.11 与 12 的公共交集：(IApplicationPaths, IXmlSerializer)。
-/// 10.10 及更早版本用的是 BasePlugin(IApplicationHost)，本插件不支持那些版本，
-/// 因此这里不需要任何条件编译 —— 单签名即可双版本安装。
+/// 构造函数签名 BasePlugin(IApplicationPaths, IXmlSerializer) 是 Jellyfin 12 的标准签名。
 /// </summary>
 public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {

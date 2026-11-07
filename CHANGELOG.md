@@ -19,5 +19,5 @@ Release 说明与 `manifest.json` 的 `changelog` 字段。
 
 ### 🔧 构建
 
-- 双目标打包：`net9.0` → Jellyfin 10.11（targetAbi 10.11.0.0），`net10.0` → Jellyfin 12（targetAbi 12.0.0.0）。
+- 仅目标 Jellyfin 12（net10.0，targetAbi 12.0.0.0）；不再提供 10.11 包。
 - 插件包随 GitHub Release 分发，插件仓库清单位于仓库根 `manifest.json`。
