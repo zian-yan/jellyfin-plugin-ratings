@@ -133,6 +133,7 @@ public sealed class MdbListSource : IRatingSource
                 : RatingEntry.Create("Popcornmeter", Logos.Audience, value, 100, null, 30),
             "metacritic" => RatingEntry.Create("Metacritic", Logos.Metacritic, value, 100, null, 40),
             "metacriticuser" or "metacritic_user" => RatingEntry.Create("Metacritic User", Logos.MetacriticUser, value, 10, null, 50),
+            "tmdb" => RatingEntry.Create("TMDb", Logos.Tmdb, NormalizeTmdb(value), 10, null, 15),
             "rogerebert" or "roger_ebert" => RatingEntry.Create("Roger Ebert", Logos.RogerEbert, value, 4, null, 60),
             "trakt" => RatingEntry.Create("Trakt", Logos.Trakt, value, 100, null, 70),
             "letterboxd" => RatingEntry.Create("Letterboxd", Logos.Letterboxd, value, 5, null, 80),
@@ -140,6 +141,12 @@ public sealed class MdbListSource : IRatingSource
             _ => null
         };
     }
+
+    /// <summary>
+    /// MDBList 的 tmdb 评分按百分制返回（8.6 分 → 86），其余来源多是原始量纲，
+    /// 因此只有大于 10 的值才折算回 10 分制，避免把 0-10 的值误除。
+    /// </summary>
+    private static double NormalizeTmdb(double value) => value > 10 ? value / 10 : value;
 
     private static string? ReadString(JsonElement element, string name)
     {

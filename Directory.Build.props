@@ -13,9 +13,9 @@
     <Deterministic>true</Deterministic>
     <NeutralLanguage>zh-Hans</NeutralLanguage>
 
-    <Version>1.2.2</Version>
-    <AssemblyVersion>1.2.2.0</AssemblyVersion>
-    <FileVersion>1.2.2.0</FileVersion>
+    <Version>1.2.3</Version>
+    <AssemblyVersion>1.2.3.0</AssemblyVersion>
+    <FileVersion>1.2.3.0</FileVersion>
     <Authors>jellyfin-plugin-ratings</Authors>
     <Product>Jellyfin Ratings</Product>
   </PropertyGroup>

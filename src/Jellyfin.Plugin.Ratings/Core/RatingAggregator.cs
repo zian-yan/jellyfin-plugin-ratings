@@ -219,7 +219,15 @@ public sealed class RatingAggregator
             {
                 if (episodeTask is not null)
                 {
-                    MergeResult(response, await episodeTask.ConfigureAwait(false), config);
+                    var episodeResult = await episodeTask.ConfigureAwait(false);
+                    MergeResult(response, episodeResult, config);
+
+                    // MDBList 是按整剧（show）取的，它带的 TMDb 分是整剧分；
+                    // 分集页已经有该集分数时，让整剧分让位，避免同一个 TMDb 图标出现两次
+                    if (episodeResult.Ratings.Count > 0)
+                    {
+                        response.Ratings.RemoveAll(entry => string.Equals(entry.Source, "TMDb", StringComparison.OrdinalIgnoreCase));
+                    }
                 }
 
                 if (response.Ratings.Count > 0)
