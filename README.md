@@ -178,9 +178,13 @@ jellyfin-plugin-ratings/
 │   ├── jellyfin_ratings_v2.user.js
 │   ├── jellyfin_ratings.user.js
 │   └── ratings.js
-├── docs/
+├── docs/                                  # 同时是插件仓库的静态根（Jellyfin 从这里拉清单）
+│   ├── manifest.json                      # 仓库清单（自动生成，含 MD5）
+│   ├── packages/*.zip                     # 供 Jellyfin 下载的插件包
+│   ├── index.html / icon.png              # 仓库落地页与目录图标
 │   ├── COMPATIBILITY.md                   # 10.11 vs 12 逐项 API 对比
 │   └── LEGACY_USERSCRIPT.md               # 旧版用户脚本安装方式
+├── tools/make-manifest.py                 # 由 dist/*.zip 生成 manifest（md5/timestamp/排序）
 ├── src/Jellyfin.Plugin.Ratings/           # 插件主工程（net9.0 + net10.0）
 │   ├── Jellyfin.Plugin.Ratings.csproj     # 条件引用 Jellyfin 包，版本取自 Directory.Build.props
 │   ├── Plugin.cs                          # 插件入口（继承 BasePlugin<PluginConfiguration>）
