@@ -52,9 +52,27 @@ public sealed partial class CertificationsSource : IRatingSource
             return;
         }
 
-        var url = rtId!.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? rtId
-            : "https://www.rottentomatoes.com/" + rtId.TrimStart('/');
+        var target = rtId!.Trim();
+        string url;
+
+        if (target.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            // Wikidata 是公开可编辑的数据源，不能把它返回的值当成任意 URL 去请求：
+            // 否则任何人给某部片挂一个 http://内网地址 的 P1258 就能让服务器发起 SSRF。
+            if (!Uri.TryCreate(target, UriKind.Absolute, out var candidate)
+                || !string.Equals(candidate.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || !IsRottenTomatoesHost(candidate.Host))
+            {
+                context.Logger.LogDebug("[Ratings] 忽略非 rottentomatoes.com 的 RT 链接: {Host}", candidate?.Host ?? "-");
+                return;
+            }
+
+            url = candidate.ToString();
+        }
+        else
+        {
+            url = "https://www.rottentomatoes.com/" + target.TrimStart('/');
+        }
 
         var page = await context.Http.GetAsync(url, context.Config, context.Logger, null, ct).ConfigureAwait(false);
         if (!page.Ok)
@@ -121,6 +139,10 @@ public sealed partial class CertificationsSource : IRatingSource
         => int.TryParse(new string(Array.FindAll(raw.ToCharArray(), char.IsDigit)), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
             ? value
             : 0;
+
+    private static bool IsRottenTomatoesHost(string host)
+        => host.Equals("rottentomatoes.com", StringComparison.OrdinalIgnoreCase)
+           || host.EndsWith(".rottentomatoes.com", StringComparison.OrdinalIgnoreCase);
 
     [GeneratedRegex("<script\\s+id=\"media-scorecard-json\"[^>]*>([\\s\\S]*?)</script>", RegexOptions.Compiled)]
     private static partial Regex ScorecardRegex();

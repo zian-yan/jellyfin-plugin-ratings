@@ -28,6 +28,9 @@ public sealed class RatingsHttp : IDisposable
     private const string DefaultUserAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
+    /// <summary>TCP 建连超时。与「整体请求超时」无关，后者由 CancellationToken 控制。</summary>
+    private const int ConnectTimeoutSeconds = 5;
+
     private readonly ConcurrentDictionary<string, HttpClient> _clients = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<RatingsHttp> _logger;
 
@@ -36,17 +39,22 @@ public sealed class RatingsHttp : IDisposable
         _logger = logger;
     }
 
-    private HttpClient GetClient(PluginConfiguration config, int timeoutSeconds)
+    /// <summary>
+    /// 按代理地址缓存 HttpClient。这里刻意只用代理做 key：
+    /// 之前把超时也拼进 key，用户每调一次超时就会多出一个永不释放的 HttpClient。
+    /// 连接建立超时与整体请求超时是两件事，前者固定即可，后者由调用方的 CancellationToken 控制。
+    /// </summary>
+    private HttpClient GetClient(PluginConfiguration config)
     {
         var proxy = config.HttpProxy?.Trim() ?? string.Empty;
-        var key = proxy + "|" + timeoutSeconds;
-        return _clients.GetOrAdd(key, _ =>
+
+        return _clients.GetOrAdd(proxy, _ =>
         {
             var handler = new SocketsHttpHandler
             {
                 AutomaticDecompression = DecompressionMethods.All,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-                ConnectTimeout = TimeSpan.FromSeconds(Math.Max(3, timeoutSeconds))
+                ConnectTimeout = TimeSpan.FromSeconds(ConnectTimeoutSeconds)
             };
 
             if (!string.IsNullOrEmpty(proxy))
@@ -132,7 +140,7 @@ public sealed class RatingsHttp : IDisposable
 
         try
         {
-            var client = GetClient(config, (int)timeout.TotalSeconds);
+            var client = GetClient(config);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cts.Token)
                 .ConfigureAwait(false);
 

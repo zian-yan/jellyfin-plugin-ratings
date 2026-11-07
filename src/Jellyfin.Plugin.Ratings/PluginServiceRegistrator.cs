@@ -1,9 +1,11 @@
 using Jellyfin.Plugin.Ratings.Core;
 using Jellyfin.Plugin.Ratings.Web;
+using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Ratings;
 
@@ -18,8 +20,12 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         JellyfinCompat.Initialize(applicationHost);
 
         serviceCollection.AddSingleton<RatingsHttp>();
-        serviceCollection.AddSingleton<RatingCache>();
+        // 用工厂注册：IApplicationPaths 取不到时退化为纯内存缓存，不让插件起不来
+        serviceCollection.AddSingleton(sp => new RatingCache(
+            sp.GetService<IApplicationPaths>(),
+            sp.GetRequiredService<ILogger<RatingCache>>()));
         serviceCollection.AddSingleton<SourceHealth>();
+        serviceCollection.AddSingleton<RequestThrottle>();
         serviceCollection.AddSingleton<RatingAggregator>();
 
         serviceCollection.AddTransient<RatingsHtmlInjector>();

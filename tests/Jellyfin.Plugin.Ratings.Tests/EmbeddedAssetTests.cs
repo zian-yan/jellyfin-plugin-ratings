@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Jellyfin.Plugin.Ratings.Api;
+using Jellyfin.Plugin.Ratings.Core;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,7 +15,7 @@ namespace Jellyfin.Plugin.Ratings.Tests;
 public class EmbeddedAssetTests
 {
     private static RatingsController CreateController()
-        => new(null!, null!, NullLogger<RatingsController>.Instance)
+        => new(null!, null!, new RequestThrottle(), NullLogger<RatingsController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };

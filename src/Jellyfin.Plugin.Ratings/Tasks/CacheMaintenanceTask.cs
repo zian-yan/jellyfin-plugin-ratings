@@ -27,7 +27,7 @@ public sealed class CacheMaintenanceTask : IScheduledTask
 
     public string Key => "JellyfinRatingsCacheMaintenance";
 
-    public string Description => "清理 Jellyfin Ratings 插件中已过期的外部评分缓存。";
+    public string Description => "清理 Jellyfin Ratings 插件中超过保留期（14 天未刷新）的评分缓存；刚过期但仍在保留期内的条目会保留，用于详情页秒开与后台刷新。";
 
     public string Category => "Ratings";
 

@@ -95,6 +95,11 @@
                         <input id="TimeoutSeconds" type="number" min="2" max="60" is="emby-input" />
                     </div>
                     <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="EnrichmentGraceMs">增强源等待宽限（毫秒，0 表示一直等）</label>
+                        <input id="EnrichmentGraceMs" type="number" min="0" max="15000" is="emby-input" />
+                        <div class="fieldDescription">主数据返回后，最多再等这么久拿豆瓣 / AlloCiné 等附加来源。超时的来源转入后台继续，结果会回填缓存，不会拖慢当前页面。</div>
+                    </div>
+                    <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="HttpProxy">HTTP 代理（可选）</label>
                         <input id="HttpProxy" type="text" is="emby-input" placeholder="http://127.0.0.1:7890" />
                         <div class="fieldDescription">留空表示直连。适用于服务器无法直接访问豆瓣 / AlloCiné 的地区。</div>
@@ -107,6 +112,11 @@
                         <label class="inputLabel inputLabelUnfocused" for="CooldownMinutes">失败冷却时长（分钟）</label>
                         <input id="CooldownMinutes" type="number" min="1" max="1440" is="emby-input" />
                     </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="RateLimitPerMinute">单客户端查询上限（次/分钟，0 表示不限）</label>
+                        <input id="RateLimitPerMinute" type="number" min="0" max="6000" is="emby-input" />
+                        <div class="fieldDescription">查询接口会代替调用方请求 MDBList / TMDb / 豆瓣。正常浏览一次详情页只有 1 个请求，120 足够；调小可防脚本刷接口消耗 API 配额。</div>
+                    </div>
                     <label class="checkboxContainer">
                         <input type="checkbox" is="emby-checkbox" id="EnableWebInjection" />
                         <span>自动向前端页面注入评分脚本</span>
@@ -117,7 +127,7 @@
                     </label>
                     <label class="checkboxContainer">
                         <input type="checkbox" is="emby-checkbox" id="ExposeErrors" />
-                        <span>接口响应中返回错误摘要（排障用）</span>
+                        <span>接口响应中返回错误摘要（排障用，默认关闭）</span>
                     </label>
                 </div>
 
@@ -153,8 +163,10 @@
                 MaxRatingsPerItem: 6,
                 CacheMinutes: 720,
                 TimeoutSeconds: 8,
+                EnrichmentGraceMs: 1200,
                 FailureThreshold: 3,
-                CooldownMinutes: 10
+                CooldownMinutes: 10,
+                RateLimitPerMinute: 120
             };
 
             var boolFields = [
@@ -202,7 +214,8 @@
                     if (config.EnableDouban === undefined) { el('EnableDouban').checked = false; }
                     if (config.EnableAllocine === undefined) { el('EnableAllocine').checked = false; }
                     if (config.EnableCertifications === undefined) { el('EnableCertifications').checked = false; }
-                    if (config.RequireAuthentication === undefined) { el('RequireAuthentication').checked = false; }
+                    if (config.RequireAuthentication === undefined) { el('RequireAuthentication').checked = true; }
+                    if (config.ExposeErrors === undefined) { el('ExposeErrors').checked = false; }
                     Dashboard.hideLoadingMsg();
                 });
             }

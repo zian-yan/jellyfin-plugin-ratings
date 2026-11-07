@@ -9,11 +9,13 @@
 - **多来源评分聚合**：MDBList（IMDb、烂番茄、Popcornmeter、Metacritic、Trakt、Letterboxd、MyAnimeList）、TMDb、AniList、Kinopoisk、豆瓣、AlloCiné。
 - **单集 / 单季评分**：从 `Episode` / `Season` 回溯到 `Series` 取 TMDb ID，按季集号定位，只显示该集评分。
 - **认证角标**：烂番茄「新鲜认证 / 观众认证」、Metacritic「必看」替换为认证版图标。
-- **服务端缓存与并发去重**：默认缓存 720 分钟，同一部片多人同时打开只发一轮请求；定时任务每 6 小时清理过期项。
+- **服务端缓存与并发去重**：默认缓存 720 分钟，内存 + 磁盘双层（重启不丢），同一部片多人同时打开只发一轮请求；过期后先返回旧值再后台刷新，定时任务每 6 小时清理超期项。
+- **首屏不闪旧评分**：进入详情页立刻占位，取到外部评分再渲染，不会出现「先显示 Jellyfin 原始评分、几秒后被替换」的跳变；同一会话内回看直接预渲染。
 - **失败隔离与熔断**：单源异常不影响其他来源；连续失败进入冷却期，避免拖慢详情页。
 - **零文件写入的脚本注入**：不修改磁盘上的 `index.html`，容器 / 只读 rootfs / 升级不丢配置；所有来源 logo 以嵌入资源打包，不依赖外部 CDN。
 - **密钥不暴露**：API Key 只存服务端配置，浏览器永远拿不到；日志输出前自动脱敏。
-- **可诊断**：`/Ratings/v1/health` 一次性给出注入状态、缓存条数与各数据源健康度。
+- **接口默认要求登录态**：查询接口需 Jellyfin 登录态（浏览器端由注入脚本自动带上），并按客户端 120 次/分钟限流——否则任何人都能把它当成免费的外部 API 代理，刷光你的 MDBList 配额。静态资源（logo、`client.js`）不受影响。
+- **可诊断**：`/Ratings/v1/health` 一次性给出注入状态、缓存条数与各数据源健康度（未登录时只返回版本、注入状态与缓存条数）。
 
 ---
 
@@ -63,8 +65,10 @@ https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/manifest
 2. 打开任意影片详情页，硬刷新一次（`Ctrl+F5`，或清 Jellyfin Media Player 的缓存目录）。
 3. 打开 `/Ratings/v1/health` 确认：
    - `injectionActive: true` → 注入生效
-   - `sources.mdblist.keyConfigured: true` → 密钥已读取
+   - `sources.mdblist.keyConfigured: true` → 密钥已读取（需登录后查看；未登录只返回版本、注入状态与缓存条数）
    - 点开一部电影后 `cacheEntries` 应大于 0
+
+> **关于「API 需要登录态」**：默认开启。浏览器端由注入脚本自动带 token，用户无感知；但用 `curl` 或第三方脚本直接调 `/Ratings/v1/lookup` 时需要带 Jellyfin API Key（`?api_key=...` 或 `Authorization` 头）。若你的场景需要匿名调用（例如公开库），可在设置里关掉，同时建议把「单客户端查询上限」调小。
 
 > **卸载 / 回滚**：删除插件目录并重启即可，插件不写数据库、不改媒体元数据。只想临时停用前端渲染，把 `EnableWebInjection` 关掉即可，服务端接口仍可单独使用。
 

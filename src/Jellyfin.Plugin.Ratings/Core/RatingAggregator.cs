@@ -16,12 +16,16 @@ namespace Jellyfin.Plugin.Ratings.Core;
 /// 评分聚合器。替代原脚本中散落在浏览器端的 fetch + 代理逻辑：
 /// 统一调度、并行抓取、单点缓存、单源失败隔离与健康度熔断都在这里完成。
 ///
-/// 依赖顺序分两波：
-///   Wave 1 - MDBList（主数据）与 TMDb external_ids（补 IMDb ID）
-///   Wave 2 - 需要 IMDb ID / 标题年份的增强源（AniList、豆瓣、AlloCiné、Kinopoisk、认证角标）
+/// 时序（针对首次加载慢做了三处调整）：
+///   Wave 0 - TMDb external_ids 补 IMDb ID（与 Wave 1 并行，不再串行等待）
+///   Wave 1 - MDBList 主数据（优先用 TMDb ID，本身不依赖 IMDb ID）
+///   Wave 2 - 需要 IMDb ID / 标题年份的增强源并行；超过宽限期则先返回已有结果
 /// </summary>
 public sealed class RatingAggregator
 {
+    /// <summary>宽限期超时后先返回的部分结果，缓存的存活时间（分钟）。</summary>
+    private const int PartialCacheMinutes = 1;
+
     private readonly RatingsHttp _http;
     private readonly RatingCache _cache;
     private readonly SourceHealth _health;
@@ -47,6 +51,14 @@ public sealed class RatingAggregator
 
     public async Task<RatingsResponse> GetAsync(RatingQuery query, PluginConfiguration config, CancellationToken cancellationToken)
     {
+        // 兜底白名单：Provider ID 会拼进外部 URL，非法值直接丢弃，避免路径注入
+        query.TmdbId = RatingQuery.SanitizeId(query.TmdbId);
+        query.ImdbId = RatingQuery.SanitizeId(query.ImdbId);
+
+        // 磁盘缓存是后台加载的：最多等 300ms，等不到就按空缓存继续（最坏是多打一次外部接口），
+        // 绝不把「读完整个缓存文件」的耗时压到请求线程上
+        await _cache.EnsureLoadedAsync(TimeSpan.FromMilliseconds(300), cancellationToken).ConfigureAwait(false);
+
         if (!query.HasAnyId)
         {
             return new RatingsResponse
@@ -66,6 +78,16 @@ public sealed class RatingAggregator
             return cached;
         }
 
+        // 过期旧值：先返回，再后台刷新。详情页不必等外部接口返回。
+        if (_cache.TryGetStale(key, out var stale, out var fetchedAt) && stale is not null)
+        {
+            stale.FromCache = true;
+            var ageMinutes = (int)(DateTimeOffset.UtcNow - fetchedAt).TotalMinutes;
+            _logger.LogDebug("[Ratings] 命中过期缓存（{Age} 分钟前），后台刷新: {Key}", ageMinutes, key);
+            _ = RevalidateAsync(query, config, key);
+            return stale;
+        }
+
         // 同一个条目被并发打开（多人同时浏览、前端重复扫描）时只发一轮外部请求
         var lazy = _inFlight.GetOrAdd(
             key,
@@ -79,8 +101,49 @@ public sealed class RatingAggregator
         }
         finally
         {
-            _inFlight.TryRemove(key, out _);
+            ReleaseInFlight(key, lazy);
         }
+    }
+
+    /// <summary>
+    /// 后台刷新过期缓存。不占用调用方请求，失败也不影响已经返回的旧数据。
+    /// 使用 CancellationToken.None：前端刷新/切页取消请求时，刷新不应该被一并取消。
+    /// </summary>
+    private async Task RevalidateAsync(RatingQuery query, PluginConfiguration config, string key)
+    {
+        Lazy<Task<RatingsResponse>>? lazy = null;
+
+        try
+        {
+            lazy = _inFlight.GetOrAdd(
+                key,
+                _ => new Lazy<Task<RatingsResponse>>(
+                    () => BuildAsync(query, config, key, CancellationToken.None),
+                    LazyThreadSafetyMode.ExecutionAndPublication));
+
+            await lazy.Value.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[Ratings] 后台刷新失败: {Key}", key);
+        }
+        finally
+        {
+            if (lazy is not null)
+            {
+                ReleaseInFlight(key, lazy);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 释放去重占位。只有「字典里仍然是自己创建的那一个」时才移除——
+    /// 无条件 TryRemove 会把后来者正在等待的任务一并删掉，导致同一部片被重复抓取。
+    /// </summary>
+    private void ReleaseInFlight(string key, Lazy<Task<RatingsResponse>> lazy)
+    {
+        ((ICollection<KeyValuePair<string, Lazy<Task<RatingsResponse>>>>)_inFlight)
+            .Remove(new KeyValuePair<string, Lazy<Task<RatingsResponse>>>(key, lazy));
     }
 
     private async Task<RatingsResponse> BuildAsync(RatingQuery query, PluginConfiguration config, string cacheKey, CancellationToken cancellationToken)
@@ -108,23 +171,34 @@ public sealed class RatingAggregator
 
         try
         {
-            // ---- Wave 0: 补齐 IMDb ID ----
+            // ---- 三路并发启动：补 IMDb ID、主数据源、单集 TMDb 互不依赖 ----
+            Task<string?>? imdbTask = null;
             if (string.IsNullOrWhiteSpace(query.ImdbId)
                 && config.EnableTmdb
                 && !string.IsNullOrWhiteSpace(query.TmdbId))
             {
-                var imdb = await _registry.Tmdb.ResolveImdbIdAsync(query, context, cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(imdb))
-                {
-                    query.ImdbId = imdb;
-                    response.ImdbId = imdb;
-                }
+                imdbTask = ResolveImdbIdAsync(query, context, cancellationToken);
             }
 
-            // ---- Wave 1: 主数据源 ----
+            Task<SourceResult>? mainTask = null;
             if (_registry.MdbList.IsEnabled(config))
             {
-                var main = await RunAsync(_registry.MdbList, query, context, cancellationToken).ConfigureAwait(false);
+                mainTask = RunAsync(_registry.MdbList, query, context, cancellationToken);
+            }
+            else
+            {
+                response.Errors.Add("mdblist: 已在配置中禁用");
+            }
+
+            var episodeOnly = (query.IsEpisode || query.IsSeason) && config.EnableEpisodeRatings;
+            Task<SourceResult>? episodeTask = episodeOnly && config.EnableTmdb
+                ? RunAsync(_registry.Tmdb, query, context, cancellationToken)
+                : null;
+
+            // ---- Wave 1：主数据 ----
+            if (mainTask is not null)
+            {
+                var main = await mainTask.ConfigureAwait(false);
                 MergeResult(response, main, config);
 
                 if (!string.IsNullOrWhiteSpace(main.Title))
@@ -139,28 +213,33 @@ public sealed class RatingAggregator
                     response.Year ??= main.Year;
                 }
             }
-            else
-            {
-                response.Errors.Add("mdblist: 已在配置中禁用");
-            }
 
             // ---- 单集 / 单季：只展示该集(季) TMDb 评分，与原脚本一致 ----
-            var episodeOnly = (query.IsEpisode || query.IsSeason) && config.EnableEpisodeRatings;
             if (episodeOnly)
             {
-                if (config.EnableTmdb)
+                if (episodeTask is not null)
                 {
-                    var tmdb = await RunAsync(_registry.Tmdb, query, context, cancellationToken).ConfigureAwait(false);
-                    MergeResult(response, tmdb, config);
+                    MergeResult(response, await episodeTask.ConfigureAwait(false), config);
                 }
 
                 if (response.Ratings.Count > 0)
                 {
-                    return Finish(response, config, cacheKey, stopwatch);
+                    return Finish(response, config, cacheKey, stopwatch, persist: true);
                 }
             }
 
-            // ---- Wave 2: 增强源并行 ----
+            // ---- Wave 0 收口：Wave 2 需要 IMDb ID，此时它通常已经并行完成 ----
+            if (imdbTask is not null)
+            {
+                var imdb = await imdbTask.ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(imdb))
+                {
+                    query.ImdbId = imdb;
+                    response.ImdbId = imdb;
+                }
+            }
+
+            // ---- Wave 2：增强源并行，超出宽限期先返回已有结果 ----
             var enrichment = _registry.All
                 .Where(source => source.Key is not ("tmdb" or "mdblist"))
                 .Where(source => source.IsEnabled(config))
@@ -169,8 +248,44 @@ public sealed class RatingAggregator
 
             if (enrichment.Length > 0)
             {
-                var results = await Task.WhenAll(enrichment).ConfigureAwait(false);
-                foreach (var result in results)
+                var all = Task.WhenAll(enrichment);
+                var grace = Math.Clamp(config.EnrichmentGraceMs, 0, 15000);
+
+                if (grace > 0)
+                {
+                    var first = await Task.WhenAny(all, Task.Delay(grace, cancellationToken)).ConfigureAwait(false);
+                    if (!ReferenceEquals(first, all))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        // 只取已完成的部分，剩余源在后台跑完并回填完整缓存
+                        var partial = Clone(response);
+                        foreach (var task in enrichment)
+                        {
+                            if (task.IsCompletedSuccessfully)
+                            {
+                                MergeResult(partial, task.Result, config);
+                            }
+                        }
+
+                        // 先留一份未裁剪的快照给后台补全，Finish 会就地裁剪 Ratings
+                        var backgroundSnapshot = Clone(partial);
+                        CacheWhenComplete(all, backgroundSnapshot, config, cacheKey, stopwatch);
+
+                        var finished = Finish(partial, config, cacheKey, stopwatch, persist: false, partial: true);
+
+                        // 部分结果也写一个很短的 TTL：否则紧接着再有人打开同一部片，
+                        // 会因为缓存未命中而把整套外部请求重打一遍
+                        if (config.CacheMinutes > 0)
+                        {
+                            _cache.Set(cacheKey, finished, Math.Min(config.CacheMinutes, PartialCacheMinutes));
+                        }
+
+                        return finished;
+                    }
+                }
+
+                foreach (var result in await all.ConfigureAwait(false))
                 {
                     MergeResult(response, result, config);
                 }
@@ -183,7 +298,7 @@ public sealed class RatingAggregator
                     : "未获取到评分数据";
             }
 
-            return Finish(response, config, cacheKey, stopwatch);
+            return Finish(response, config, cacheKey, stopwatch, persist: true);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -198,7 +313,70 @@ public sealed class RatingAggregator
         }
     }
 
-    private RatingsResponse Finish(RatingsResponse response, PluginConfiguration config, string cacheKey, Stopwatch stopwatch)
+    /// <summary>补齐 IMDb ID，失败时返回 null（不影响主流程）。</summary>
+    private async Task<string?> ResolveImdbIdAsync(RatingQuery query, SourceContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _registry.Tmdb.ResolveImdbIdAsync(query, context, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[Ratings] 解析 IMDb ID 失败: {TmdbId}", query.TmdbId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 宽限期超时后，等剩余增强源在后台完成，把完整结果写回缓存。
+    /// 下一个访问者（或用户刷新）就能直接命中完整数据，不必再等。
+    /// </summary>
+    private void CacheWhenComplete(
+        Task<SourceResult[]> all,
+        RatingsResponse partialSnapshot,
+        PluginConfiguration config,
+        string cacheKey,
+        Stopwatch stopwatch)
+    {
+        _ = all.ContinueWith(
+            completed =>
+            {
+                try
+                {
+                    if (completed.Status != TaskStatus.RanToCompletion)
+                    {
+                        return;
+                    }
+
+                    var snapshot = Clone(partialSnapshot);
+                    foreach (var result in completed.Result)
+                    {
+                        MergeResult(snapshot, result, config);
+                    }
+
+                    Finish(snapshot, config, cacheKey, stopwatch, persist: true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "[Ratings] 后台回填缓存失败: {Key}", cacheKey);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private RatingsResponse Finish(
+        RatingsResponse response,
+        PluginConfiguration config,
+        string cacheKey,
+        Stopwatch stopwatch,
+        bool persist,
+        bool partial = false)
     {
         response.Ratings = response.Ratings
             .GroupBy(entry => entry.Source, StringComparer.OrdinalIgnoreCase)
@@ -213,11 +391,15 @@ public sealed class RatingAggregator
             response.Errors.Clear();
         }
 
-        _cache.Set(cacheKey, response, config.CacheMinutes);
+        if (persist)
+        {
+            _cache.Set(cacheKey, response, config.CacheMinutes);
+        }
 
         _logger.LogInformation(
-            "[Ratings] 聚合完成 {Title} ({Year}) 来源 {Count} 个，错误 {Errors} 条，耗时 {Elapsed}ms",
-            response.Title ?? "-",
+            "[Ratings] 聚合完成{Lag} {Title} ({Year}) 来源 {Count} 个，错误 {Errors} 条，耗时 {Elapsed}ms",
+            partial ? "（部分，其余在后台继续）" : string.Empty,
+            LogText.Clean(response.Title),
             response.Year?.ToString() ?? "-",
             response.Ratings.Count,
             response.Errors.Count,
@@ -225,6 +407,23 @@ public sealed class RatingAggregator
 
         return response;
     }
+
+    private static RatingsResponse Clone(RatingsResponse source) => new()
+    {
+        ItemId = source.ItemId,
+        MediaType = source.MediaType,
+        TmdbId = source.TmdbId,
+        ImdbId = source.ImdbId,
+        Title = source.Title,
+        Year = source.Year,
+        Season = source.Season,
+        Episode = source.Episode,
+        Ratings = new List<RatingEntry>(source.Ratings),
+        Badges = new List<string>(source.Badges),
+        Errors = new List<string>(source.Errors),
+        Message = source.Message,
+        FetchedAt = source.FetchedAt
+    };
 
     private void MergeResult(RatingsResponse target, SourceResult result, PluginConfiguration config)
     {

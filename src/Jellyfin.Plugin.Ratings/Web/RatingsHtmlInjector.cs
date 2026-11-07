@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Ratings.Api;
@@ -44,6 +45,8 @@ public sealed class RatingsHtmlInjector
         var config = ConfigProvider.Current;
         if (!config.EnableWebInjection)
         {
+            // 配置被关掉后要复位运行期状态，否则 health 会一直显示注入仍然生效
+            RatingsRuntimeState.MarkInjectionDisabled();
             await _next(context).ConfigureAwait(false);
             return;
         }
@@ -132,9 +135,13 @@ public sealed class RatingsHtmlInjector
         }
 
         var pathBase = request.PathBase.HasValue ? request.PathBase.Value : string.Empty;
-        var tag = $"<script {Marker}=\"true\" src=\"{pathBase}{ScriptUrl}\" defer></script>";
 
-        _logger.LogDebug("[Ratings] 已注入客户端脚本: {Tag}", tag);
+        // PathBase 可能来自反向代理透传的头部（如 X-Forwarded-Prefix），
+        // 直接拼进 HTML 属性会被闭合引号注入脚本，这里统一做 HTML 编码。
+        var src = HtmlEncoder.Default.Encode(pathBase + ScriptUrl);
+        var tag = $"<script {Marker}=\"true\" src=\"{src}\" defer></script>";
+
+        _logger.LogDebug("[Ratings] 已注入客户端脚本: {Tag}", LogText.Clean(tag));
         return html.Insert(index, tag + Environment.NewLine);
     }
 

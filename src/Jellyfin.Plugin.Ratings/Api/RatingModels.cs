@@ -107,6 +107,37 @@ public sealed class RatingQuery
 
     public bool HasAnyId => !string.IsNullOrWhiteSpace(TmdbId) || !string.IsNullOrWhiteSpace(ImdbId);
 
+    /// <summary>
+    /// 外部 ID 白名单：只允许字母、数字、连字符，长度上限 32。
+    ///
+    /// Provider ID 会直接拼进外部接口的 URL / SPARQL 语句，而它可能被 NFO 文件或
+    /// 第三方元数据写入任意内容（例如 <c>550/../../x</c>、<c>1?apikey=</c>）。
+    /// 所有拼串前都应经过本方法，非法值一律丢弃而不是透传。
+    /// </summary>
+    public static string? SanitizeId(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return null;
+        }
+
+        var trimmed = id.Trim();
+        if (trimmed.Length > 32)
+        {
+            return null;
+        }
+
+        foreach (var ch in trimmed)
+        {
+            if (!char.IsAsciiLetterOrDigit(ch) && ch != '-')
+            {
+                return null;
+            }
+        }
+
+        return trimmed;
+    }
+
     public string CacheKey()
     {
         var sb = new StringBuilder();

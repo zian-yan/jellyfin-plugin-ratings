@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -33,14 +34,42 @@ public class RatingsController : ControllerBase
 
     private static readonly ConcurrentDictionary<string, byte[]> LogoCache = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 嵌入资源里的合法 logo 名集合。这个接口是匿名的，必须白名单校验：
+    /// 否则任意 name 都会被 <see cref="LogoCache"/> 记住一条（即使是空数组），
+    /// 匿名请求即可把内存堆到 OOM。
+    /// </summary>
+    private static readonly Lazy<HashSet<string>> KnownLogos = new(() =>
+    {
+        const string prefix = "Jellyfin.Plugin.Ratings.Web.logos.";
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var resource in typeof(Plugin).Assembly.GetManifestResourceNames())
+        {
+            if (resource.StartsWith(prefix, StringComparison.Ordinal)
+                && resource.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+            {
+                set.Add(resource.Substring(prefix.Length, resource.Length - prefix.Length - 4));
+            }
+        }
+
+        return set;
+    }, LazyThreadSafetyMode.ExecutionAndPublication);
+
+
     private readonly ILibraryManager _libraryManager;
     private readonly RatingAggregator _aggregator;
+    private readonly RequestThrottle _throttle;
     private readonly ILogger<RatingsController> _logger;
 
-    public RatingsController(ILibraryManager libraryManager, RatingAggregator aggregator, ILogger<RatingsController> logger)
+    public RatingsController(
+        ILibraryManager libraryManager,
+        RatingAggregator aggregator,
+        RequestThrottle throttle,
+        ILogger<RatingsController> logger)
     {
         _libraryManager = libraryManager;
         _aggregator = aggregator;
+        _throttle = throttle;
         _logger = logger;
     }
 
@@ -58,9 +87,9 @@ public class RatingsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var config = ConfigProvider.Current;
-        if (!IsAllowed(config))
+        if (Gate(config) is { } denied)
         {
-            return Unauthorized(new { error = "authentication required" });
+            return denied;
         }
 
         BaseItem? item;
@@ -98,16 +127,16 @@ public class RatingsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var config = ConfigProvider.Current;
-        if (!IsAllowed(config))
+        if (Gate(config) is { } denied)
         {
-            return Unauthorized(new { error = "authentication required" });
+            return denied;
         }
 
         var query = new RatingQuery
         {
             MediaType = string.Equals(type, "show", StringComparison.OrdinalIgnoreCase) ? "show" : "movie",
-            TmdbId = tmdbId,
-            ImdbId = imdbId,
+            TmdbId = RatingQuery.SanitizeId(tmdbId),
+            ImdbId = RatingQuery.SanitizeId(imdbId),
             Season = season,
             Episode = episode,
             Title = title,
@@ -169,6 +198,11 @@ public class RatingsController : ControllerBase
             return BadRequest("invalid logo name");
         }
 
+        if (!KnownLogos.Value.Contains(name))
+        {
+            return NotFound("logo not found");
+        }
+
         var bytes = LogoCache.GetOrAdd(name, key =>
         {
             var assembly = typeof(Plugin).Assembly;
@@ -193,15 +227,42 @@ public class RatingsController : ControllerBase
         return File(bytes, "image/png");
     }
 
-    /// <summary>诊断接口：版本、注入状态、缓存与数据源健康度。</summary>
+    /// <summary>
+    /// 诊断接口：版本、注入状态、缓存与数据源健康度。
+    ///
+    /// 未认证时只返回「活着没」级别的最小信息（版本 / 注入是否生效 / 缓存条数），
+    /// 保证 README 里「直接打开 URL 排障」的流程仍然可用；
+    /// 数据源配置与健康度属于内部状态，需要登录后查看。
+    /// </summary>
     [HttpGet("v1/health")]
     [AllowAnonymous]
     public IActionResult Health()
     {
         var config = ConfigProvider.Current;
-        if (!IsAllowed(config))
+        var authenticated = !config.RequireAuthentication || (User?.Identity?.IsAuthenticated ?? false);
+
+        if (!authenticated)
         {
-            return Unauthorized(new { error = "authentication required" });
+            var minimal = new
+            {
+                plugin = "Jellyfin.Plugin.Ratings",
+                version = typeof(Plugin).Assembly.GetName().Version?.ToString(),
+                serverVersion = JellyfinCompat.ServerVersion.ToString(),
+                targetFramework = "net10.0",
+                injectionActive = RatingsRuntimeState.InjectionActive,
+                webInjectionEnabled = config.EnableWebInjection,
+                cacheEntries = _aggregator.Cache.Count,
+                cachePersistent = _aggregator.Cache.Persistent,
+                authenticated = false,
+                hint = "登录后（或带 API Key）可查看各数据源健康度与限流统计"
+            };
+
+            return Content(JsonSerializer.Serialize(minimal, JsonOptions), "application/json");
+        }
+
+        if (Gate(config) is { } denied)
+        {
+            return denied;
         }
 
         var payload = new
@@ -213,6 +274,11 @@ public class RatingsController : ControllerBase
             injectionActive = RatingsRuntimeState.InjectionActive,
             webInjectionEnabled = config.EnableWebInjection,
             cacheEntries = _aggregator.Cache.Count,
+            cachePersistent = _aggregator.Cache.Persistent,
+            // 只暴露文件名，避免把服务器绝对路径泄露给调用方
+            cacheFile = _aggregator.Cache.FilePath is { } file ? Path.GetFileName(file) : null,
+            rateLimitPerMinute = config.RateLimitPerMinute,
+            throttledClients = _throttle.TrackedClients,
             sources = new
             {
                 mdblist = new { enabled = config.EnableMdbList, keyConfigured = !string.IsNullOrWhiteSpace(config.MdbListApiKey) },
@@ -259,6 +325,46 @@ public class RatingsController : ControllerBase
     }
 
     /// <summary>
+    /// 访问闸门：先认证，再限流。返回 null 表示放行。
+    ///
+    /// 这两个接口会代替调用方去请求外部 API，匿名开放或无限流都会让 API Key 配额被刷光，
+    /// 因此统一收口在这里，而不是每个 action 各写一遍。
+    /// </summary>
+    private IActionResult? Gate(Configuration.PluginConfiguration config)
+    {
+        if (!IsAllowed(config))
+        {
+            return Unauthorized(new { error = "authentication required" });
+        }
+
+        var clientKey = ClientKey();
+        if (_throttle.TryAcquire(clientKey, config.RateLimitPerMinute, out var retryAfter))
+        {
+            return null;
+        }
+
+        Response.Headers["Retry-After"] = retryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _logger.LogWarning("[Ratings] 触发限流: {Client}（{Retry}s 后可重试）", LogText.Clean(clientKey), retryAfter);
+        return StatusCode(429, new { error = "too many requests", retryAfter });
+    }
+
+    /// <summary>
+    /// 限流用的客户端标识。已登录用用户标识，未登录用 TCP 对端地址。
+    /// 刻意不读 X-Forwarded-For：那是调用方可伪造的，会让按 IP 限流形同虚设。
+    /// </summary>
+    private string ClientKey()
+    {
+        var name = User?.Identity?.Name;
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            return "u:" + name;
+        }
+
+        var remote = HttpContext?.Connection?.RemoteIpAddress?.ToString();
+        return "ip:" + (string.IsNullOrEmpty(remote) ? "unknown" : remote);
+    }
+
+    /// <summary>
     /// 从媒体库条目推导查询参数。剧集/分集需要回溯到 Series 上取 TMDb ID，
     /// 再用 IndexNumber/ParentIndexNumber 拼出 TMDb 的分集地址。
     /// </summary>
@@ -282,10 +388,12 @@ public class RatingsController : ControllerBase
             providerSource = ResolveSeries(seasonItem.SeriesId) ?? item;
         }
 
-        var tmdbId = JellyfinCompat.GetProviderId(providerSource, MediaBrowser.Model.Entities.MetadataProvider.Tmdb)
-                     ?? JellyfinCompat.GetProviderId(item, MediaBrowser.Model.Entities.MetadataProvider.Tmdb);
-        var imdbId = JellyfinCompat.GetProviderId(providerSource, MediaBrowser.Model.Entities.MetadataProvider.Imdb)
-                     ?? JellyfinCompat.GetProviderId(item, MediaBrowser.Model.Entities.MetadataProvider.Imdb);
+        var tmdbId = RatingQuery.SanitizeId(
+            JellyfinCompat.GetProviderId(providerSource, MediaBrowser.Model.Entities.MetadataProvider.Tmdb)
+            ?? JellyfinCompat.GetProviderId(item, MediaBrowser.Model.Entities.MetadataProvider.Tmdb));
+        var imdbId = RatingQuery.SanitizeId(
+            JellyfinCompat.GetProviderId(providerSource, MediaBrowser.Model.Entities.MetadataProvider.Imdb)
+            ?? JellyfinCompat.GetProviderId(item, MediaBrowser.Model.Entities.MetadataProvider.Imdb));
 
         return new RatingQuery
         {
@@ -327,4 +435,10 @@ public static class RatingsRuntimeState
     public static bool InjectionActive => System.Threading.Volatile.Read(ref _injectionActive) == 1;
 
     internal static void MarkInjectionActive() => System.Threading.Interlocked.Exchange(ref _injectionActive, 1);
+
+    /// <summary>
+    /// 关闭注入后复位。否则 health 会一直报 true，直到服务重启——
+    /// 排查「关掉了为什么还在注入」时会非常误导。
+    /// </summary>
+    internal static void MarkInjectionDisabled() => System.Threading.Interlocked.Exchange(ref _injectionActive, 0);
 }

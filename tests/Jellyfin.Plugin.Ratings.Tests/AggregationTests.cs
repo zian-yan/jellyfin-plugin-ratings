@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Reflection;
 using System.Text.Json;
 using Jellyfin.Plugin.Ratings.Api;
 using Jellyfin.Plugin.Ratings.Configuration;
@@ -11,9 +13,144 @@ namespace Jellyfin.Plugin.Ratings.Tests;
 public class AggregationTests
 {
     [Fact]
+    public async Task PersistentCacheSurvivesRestart()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "jfr-test-" + Guid.NewGuid().ToString("N"));
+        var paths = new FakeApplicationPaths(directory);
+
+        try
+        {
+            using (var cache = new RatingCache(paths, NullLogger<RatingCache>.Instance))
+            {
+                cache.Set("movie|550|-|-|-", new RatingsResponse { Title = "Fight Club", TmdbId = "550" }, 720);
+                // 故意不调用 Flush：Dispose 必须把脏数据刷盘，这是之前的真实缺陷
+            }
+
+            // 磁盘缓存在后台加载，等待就绪后再读（超时也算失败，说明加载逻辑没跑起来）
+            using var reopened = new RatingCache(paths, NullLogger<RatingCache>.Instance);
+            await reopened.EnsureLoadedAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+
+            Assert.True(reopened.TryGet("movie|550|-|-|-", out var restored));
+            Assert.Equal("Fight Club", restored!.Title);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void LogTextStripsControlCharactersAndTruncates()
+    {
+        Assert.Equal("-", LogText.Clean(null));
+        Assert.Equal("-", LogText.Clean("   "));
+        Assert.Equal("8.5", LogText.Clean("8.5"));
+
+        // \r 与 \n 各变成一个空格，日志行不会被伪造
+        Assert.Equal("a  b", LogText.Clean("a\r\nb"));
+
+        var cleaned = LogText.Clean(new string('x', 500));
+        Assert.Equal(201, cleaned.Length);
+        Assert.EndsWith("…", cleaned, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ThrottleBlocksAfterLimitWithinWindow()
+    {
+        var throttle = new RequestThrottle();
+
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.True(throttle.TryAcquire("u:alice", 3, out _));
+        }
+
+        Assert.False(throttle.TryAcquire("u:alice", 3, out var retryAfter));
+        Assert.True(retryAfter >= 1);
+
+        // 其他客户端不受影响
+        Assert.True(throttle.TryAcquire("u:bob", 3, out _));
+    }
+
+    [Fact]
+    public void ThrottleIsDisabledWhenLimitIsZero()    {
+        var throttle = new RequestThrottle();
+
+        for (var i = 0; i < 500; i++)
+        {
+            Assert.True(throttle.TryAcquire("u:alice", 0, out _));
+        }
+
+        Assert.Equal(0, throttle.TrackedClients);
+    }
+
+    [Theory]
+    [InlineData("550", "550")]
+    [InlineData("tt0111161", "tt0111161")]
+    [InlineData(" 1399 ", "1399")]
+    [InlineData("550/../../evil", null)]
+    [InlineData("1?apikey=x", null)]
+    [InlineData("a\"b", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void ExternalIdsAreSanitizedBeforeUrlBuilding(string? raw, string? expected)
+    {
+        Assert.Equal(expected, RatingQuery.SanitizeId(raw));
+    }
+
+    [Fact]
+    public void SanitizeIdRejectsOverlongValues()
+    {
+        Assert.Null(RatingQuery.SanitizeId(new string('1', 33)));
+    }
+
+    [Fact]
+    public void ExpiredEntryIsServedAsStaleForBackgroundRefresh()
+    {
+        using var cache = new RatingCache(null, NullLogger<RatingCache>.Instance);
+        cache.Set("k", new RatingsResponse { Title = "old" }, 720);
+
+        // 直接把条目改成「已过期但仍在保留期」，模拟 CacheMinutes 到期
+        var field = typeof(RatingCache).GetField("_items", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var items = (ConcurrentDictionary<string, RatingCacheEntry>)field.GetValue(cache)!;
+        var now = DateTimeOffset.UtcNow;
+        items["k"] = new RatingCacheEntry
+        {
+            Value = new RatingsResponse { Title = "old" },
+            FetchedAt = now.AddDays(-1),
+            ExpiresAt = now.AddMinutes(-5)
+        };
+
+        Assert.False(cache.TryGet("k", out _));
+        Assert.True(cache.TryGetStale("k", out var stale, out _));
+        Assert.Equal("old", stale!.Title);
+    }
+
+    [Fact]
+    public void StaleEntryBeyondRetentionIsNotServed()
+    {
+        using var cache = new RatingCache(null, NullLogger<RatingCache>.Instance);
+        var field = typeof(RatingCache).GetField("_items", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var items = (ConcurrentDictionary<string, RatingCacheEntry>)field.GetValue(cache)!;
+        var now = DateTimeOffset.UtcNow;
+        items["k"] = new RatingCacheEntry
+        {
+            Value = new RatingsResponse { Title = "ancient" },
+            FetchedAt = now.AddDays(-30),
+            ExpiresAt = now.AddDays(-29)
+        };
+
+        Assert.False(cache.TryGetStale("k", out _, out _));
+        Assert.Equal(1, cache.Prune());
+        Assert.Equal(0, cache.Count);
+    }
+
+    [Fact]
     public void CacheStoresAndReturnsSameInstance()
     {
-        var cache = new RatingCache(NullLogger<RatingCache>.Instance);
+        var cache = new RatingCache(null, NullLogger<RatingCache>.Instance);
         var response = new RatingsResponse { Title = "Sample", MediaType = "movie", TmdbId = "550" };
 
         cache.Set("movie|550|-|-|-", response, 5);
@@ -26,7 +163,7 @@ public class AggregationTests
     [Fact]
     public void CacheIgnoresNonPositiveTtl()
     {
-        var cache = new RatingCache(NullLogger<RatingCache>.Instance);
+        var cache = new RatingCache(null, NullLogger<RatingCache>.Instance);
         cache.Set("k", new RatingsResponse(), 0);
 
         Assert.False(cache.TryGet("k", out _));
@@ -39,7 +176,7 @@ public class AggregationTests
         using var http = new RatingsHttp(NullLogger<RatingsHttp>.Instance);
         var aggregator = new RatingAggregator(
             http,
-            new RatingCache(NullLogger<RatingCache>.Instance),
+            new RatingCache(null, NullLogger<RatingCache>.Instance),
             new SourceHealth(),
             NullLogger<RatingAggregator>.Instance);
 
