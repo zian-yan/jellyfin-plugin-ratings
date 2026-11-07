@@ -6,7 +6,7 @@
 
 用法：
     python tools/make-manifest.py
-    REPO_BASE_URL=https://zian-yan.github.io/jellyfin-plugin-ratings python tools/make-manifest.py
+    REPO_BASE_URL=https://your-host.example/jellyfin-plugin-ratings python tools/make-manifest.py
 
 关于版本排序（重要）：
     Jellyfin 选版逻辑见 Emby.Server.Implementations/Updates/InstallationManager.cs
@@ -38,7 +38,7 @@ DESCRIPTION = "服务端聚合多来源影视评分（MDBList / TMDb / 豆瓣 / 
 OVERVIEW = "用 IMDb、烂番茄、Metacritic、Trakt、Letterboxd、豆瓣、AniList 等来源的评分替换 Jellyfin 内置评分。"
 CHANGELOG = "1.0.0：首个插件版本，兼容 Jellyfin 10.11 与 12。"
 
-DEFAULT_BASE = "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs"
+DEFAULT_BASE = "https://zian-yan.github.io/jellyfin-plugin-ratings"
 
 # zip 文件名 -> (targetAbi, 排序权重)
 TARGETS = {

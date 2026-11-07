@@ -6,23 +6,23 @@
     "overview": "用 IMDb、烂番茄、Metacritic、Trakt、Letterboxd、豆瓣、AniList 等来源的评分替换 Jellyfin 内置评分。",
     "owner": "zian-yan",
     "category": "General",
-    "imageUrl": "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs/icon.png",
+    "imageUrl": "https://zian-yan.github.io/jellyfin-plugin-ratings/icon.png",
     "versions": [
       {
         "version": "1.0.0.0",
         "changelog": "1.0.0：首个插件版本，兼容 Jellyfin 10.11 与 12。",
         "targetAbi": "12.0.0.0",
-        "sourceUrl": "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs/packages/ratings-1.0.0.0-jf12.zip",
+        "sourceUrl": "https://zian-yan.github.io/jellyfin-plugin-ratings/packages/ratings-1.0.0.0-jf12.zip",
         "checksum": "f117f412dfecbaa0da177c34476dcecd",
-        "timestamp": "2026-11-07T06:46:19Z"
+        "timestamp": "2026-11-07T06:51:56Z"
       },
       {
         "version": "1.0.0.0",
         "changelog": "1.0.0：首个插件版本，兼容 Jellyfin 10.11 与 12。",
         "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs/packages/ratings-1.0.0.0-jf10.11.zip",
+        "sourceUrl": "https://zian-yan.github.io/jellyfin-plugin-ratings/packages/ratings-1.0.0.0-jf10.11.zip",
         "checksum": "2726b0a1c91ed7f325ca27a606ffc0cf",
-        "timestamp": "2026-11-07T06:46:19Z"
+        "timestamp": "2026-11-07T06:51:56Z"
       }
     ]
   }

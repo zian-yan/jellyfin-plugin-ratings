@@ -303,7 +303,7 @@ jprm plugin build --spec build.12.yaml   # 12
 仓库清单已随代码一起发布，直接把这个地址加到 Jellyfin 即可：
 
 ```
-https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs/manifest.json
+https://zian-yan.github.io/jellyfin-plugin-ratings/manifest.json
 ```
 
 操作步骤：
@@ -322,12 +322,13 @@ https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs/man
 | 12.x | `net10.0` 包（targetAbi 12.0.0.0） |
 | ≤ 10.10 | 列表里不显示（不支持） |
 
-> 若你的网络无法直连 `raw.githubusercontent.com`，把 `docs/` 目录整个放到任意 HTTPS 静态托管（GitHub Pages、对象存储、Nginx），
-> 用 `REPO_BASE_URL=https://你的域名` 重新生成清单：`python tools/make-manifest.py`，然后把新的 `manifest.json` 地址加进 Jellyfin。
+> 该地址由 GitHub Pages 提供（仓库 Settings → Pages → Source: `main` / `/docs`，已启用）。
+> 若 Pages 在你所在网络不可达，可退回到仓库原始文件地址：
+> `https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs/manifest.json`
+> （两者内容一致，区别只在 `sourceUrl` 的域名）。
 >
-> 启用 GitHub Pages 的写法：仓库 Settings → Pages → Source 选 `Deploy from a branch` → 分支 `main`、目录 `/docs`，
-> 之后仓库地址就是 `https://zian-yan.github.io/jellyfin-plugin-ratings/manifest.json`；
-> 生成时加 `REPO_BASE_URL=https://zian-yan.github.io/jellyfin-plugin-ratings` 即可让 `sourceUrl` 指向 Pages。
+> 想换成自建托管（对象存储 / Nginx）：把 `docs/` 整个上传，然后
+> `REPO_BASE_URL=https://你的域名/jellyfin-plugin-ratings python tools/make-manifest.py` 重新生成清单并提交。
 
 清单结构（`docs/manifest.json`，由 `tools/make-manifest.py` 自动生成，含真实 MD5）：
 
