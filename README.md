@@ -355,13 +355,22 @@ https://zian-yan.github.io/jellyfin-plugin-ratings/manifest.json
 ```bash
 # 1. 改版本号（唯一位置）
 #    Directory.Build.props → <Version>1.0.1</Version>
-# 2. 重建 + 重新生成清单（会更新 md5 与 timestamp，并覆盖 docs/packages 下的同名包）
+# 2. 重建 + 重新生成清单（更新 md5/timestamp，覆盖 docs/packages 下同名包）
 bash build.sh
-# 3. 提交 docs/manifest.json 与 docs/packages/*.zip
-git add docs && git commit -m "release: 1.0.1 [skip ci]" && git push
+# 3. 提交 —— 发布提交不要带 [skip ci]，否则 tag 推送同样会被跳过、CI 不跑
+git add docs && git commit -m "release: 1.0.1"
+# 4. 打标签并推送（workflow 的 on.push.tags: v* 会触发构建与打包）
+git tag -a v1.0.1 -m "Ratings v1.0.1"
+git push origin main && git push origin v1.0.1
+# 5. 在 GitHub Releases 里以该 tag 建 Release，附上 docs/packages 下两个 zip
 ```
 
-Jellyfin 端在「插件 → 目录」里会看到新版本，点更新即可（旧版本缓存的包名带版本号，不会互相覆盖）。
+几个容易踩的点：
+
+- **`[skip ci]` 会影响 tag 构建**：GitHub 是按推送的 head commit 判断跳过标记，tag 指向的提交带 `[skip ci]` 时，tag 推送同样不触发 workflow。发布提交别加。
+- **漏触发可补救**：Actions → `build` → **Run workflow** 手动跑（`workflow_dispatch`），选 tag `v1.0.1` 即可。
+- Jellyfin 端在「插件 → 目录」会看到新版本，点更新即可；旧包名带版本号，不会互相覆盖。
+- Pages 会在推送到 `main` 后自动重建（约 30–60 秒），`manifest.json` 与包同时生效。
 
 ### 8.3 卸载 / 回滚
 
