@@ -1,0 +1,11 @@
+{
+  "guid": "7f1e5b2a-9c3d-4e8b-a1f6-2d4c6b8e9a10",
+  "name": "Ratings",
+  "description": "服务端聚合多来源影视评分，缓存后由前端脚本渲染；支持单集评分与烂番茄/Metacritic 认证角标。",
+  "overview": "外部评分聚合：用 MDBList / TMDb / 豆瓣 / AniList 等来源替换 Jellyfin 内置评分",
+  "version": "1.0.0.0",
+  "targetAbi": "12.0.0.0",
+  "owner": "zian-yan",
+  "category": "General",
+  "status": "Active"
+}

@@ -71,6 +71,8 @@ bash build.sh
 #  → dist/ratings-jf12.zip     (net10.0, targetAbi 12.0.0.0)
 ```
 
+`build.sh` 只负责出包，不改清单；发布走 tag（见 [8.2.1](#821-发布新版本)）。
+
 只编译单个目标（调试用）：
 
 ```bash
@@ -92,9 +94,11 @@ jprm plugin build --spec build.12.yaml   # 12
 
 ### 8.1 手动安装（推荐，最稳）
 
-1. 选对包：
-   - Jellyfin **10.11.x** → `dist/ratings-jf10.11.zip`
-   - Jellyfin **12.x** → `dist/ratings-jf12.zip`
+1. 选对包（从 [Releases](https://github.com/zian-yan/jellyfin-plugin-ratings/releases) 下载对应 zip）：
+   - Jellyfin **10.11.x** → `ratings-1.0.0.0-jf10.11.zip`
+   - Jellyfin **12.x** → `ratings-1.0.0.0-jf12.zip`
+
+   自己编译也行：`bash build.sh` 产出同样内容的 `dist/ratings-jf10.11.zip` / `dist/ratings-jf12.zip`。
 2. 解压到插件目录，目录名建议带版本号：
 
    ```
@@ -115,12 +119,16 @@ jprm plugin build --spec build.12.yaml   # 12
    - `sources.mdblist.keyConfigured: true` → 密钥读到了；
    - 随便点开一部电影后 `cacheEntries` 应大于 0。
 
+
 ### 8.2 通过插件仓库安装（推荐）
 
-仓库清单已随代码一起发布，直接把这个地址加到 Jellyfin 即可：
+清单放在**仓库根目录** `manifest.json`，插件包托管在 **GitHub Release** 资产上（与
+[jellyfin-plugin-faststrm](https://github.com/zian-yan/jellyfin-plugin-faststrm) 同一套发布方式，不使用 GitHub Pages）。
+
+把下面这个地址加到 Jellyfin 即可：
 
 ```
-https://zian-yan.github.io/jellyfin-plugin-ratings/manifest.json
+https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/manifest.json
 ```
 
 操作步骤：
@@ -139,15 +147,121 @@ https://zian-yan.github.io/jellyfin-plugin-ratings/manifest.json
 | 12.x | `net10.0` 包（targetAbi 12.0.0.0） |
 | ≤ 10.10 | 列表里不显示（不支持） |
 
-> 该地址由 GitHub Pages 提供（仓库 Settings → Pages → Source: `main` / `/docs`，已启用）。
-> 若 Pages 在你所在网络不可达，可退回到仓库原始文件地址：
-> `https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs/manifest.json`
-> （两者内容一致，区别只在 `sourceUrl` 的域名）。
+> `raw.githubusercontent.com` 访问不稳定时，可改用 jsDelivr 镜像（缓存约 12 小时）：
+> `https://cdn.jsdelivr.net/gh/zian-yan/jellyfin-plugin-ratings@main/manifest.json`
 >
-> 想换成自建托管（对象存储 / Nginx）：把 `docs/` 整个上传，然后
-> `REPO_BASE_URL=https://你的域名/jellyfin-plugin-ratings python tools/make-manifest.py` 重新生成清单并提交。
+> 旧版本的 `https://zian-yan.github.io/jellyfin-plugin-ratings/manifest.json`（GitHub Pages）已下线，
+> 如果仓库里还留着，删掉重建一条上面的地址即可。
 
-清单结构（`docs/manifest.json`，由 `tools/make-manifest.py` 自动生成，含真实 MD5）：
+清单结构（根 `manifest.json`，发版时由 `scripts/update_manifest.py` 自动写入真实 MD5）：
+
+```json
+[
+  {
+    "guid": "7f1e5b2a-9c3d-4e8b-a1f6-2d4c6b8e9a10",
+    "name": "Ratings",
+    "imageUrl": "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/assets/icon.png",
+    "versions": [
+      { "version": "1.0.0.0", "targetAbi": "12.0.0.0",  "sourceUrl": "https://github.com/zian-yan/jellyfin-plugin-ratings/releases/download/v1.0.0/ratings-1.0.0.0-jf12.zip",    "checksum": "f117…", "timestamp": "…" },
+      { "version": "1.0.0.0", "targetAbi": "10.11.0.0", "sourceUrl": "https://github.com/zian-yan/jellyfin-plugin-ratings/releases/download/v1.0.0/ratings-1.0.0.0-jf10.11.zip", "checksum": "2726…", "timestamp": "…" }
+    ]
+  }
+]
+```
+
+**`versions` 的顺序不能调换**：Jellyfin 的选版逻辑是「先过滤 `TargetAbi ≤ 服务器版本`，再按版本号降序取第一条」
+（`InstallationManager.GetPackageVersions`）。两个 ABI 版本号相同，`OrderByDescending` 又是稳定排序，
+所以 12 的条目必须写在前面 —— 10.11 服务器会把 12 条目过滤掉，12 服务器则两条都通过、先命中 12 条目。
+
+### 8.2.1 发布新版本
+
+只打 tag，构建、打包、发 Release、回写清单全部由 `.github/workflows/release.yml` 完成：
+
+```bash
+# 1. 改版本号（以下 4 处必须一致，workflow 会校验，不一致直接 fail）
+#    Directory.Build.props   <Version>1.0.1</Version>
+#    meta.json               "version": "1.0.1.0"
+#    build.yaml              version: "1.0.1.0"
+#    build.12.yaml           version: "1.0.1.0"
+# 2. 在 CHANGELOG.md 里加 `## [1.0.1]` 段落（Release 说明与清单 changelog 都取自它）
+git commit -am "release: 1.0.1"
+git tag -a v1.0.1 -m "Ratings v1.0.1"
+git push origin main && git push origin v1.0.1   # 推 tag 即触发发布
+```
+
+workflow 依次执行：校验版本 → `dotnet test` → `build.sh` 出两个 zip → 重命名为
+`ratings-1.0.1.0-jf10.11.zip` / `ratings-1.0.1.0-jf12.zip` 上传 Release → 运行
+`scripts/update_manifest.py` 把新版本（含 MD5）写入 `manifest.json` 并提交回 `main`。
+
+几个容易踩的点：
+
+- **版本号归一化**：tag 只写三段（`v1.0.1`），文件里写 `1.0.1` 或 `1.0.1.0` 都可以，脚本会自动补第四段。
+- **`CHANGELOG.md` 缺对应段落不会失败**：只会 warning，Release 说明退化为 `v1.0.1`。
+- **漏触发可手动补**：Actions → `Release` → **Run workflow**，填 `tag_name`（如 `v1.0.1`）。
+- **不要手改清单里的旧条目**：脚本只做「删掉同版本同 ABI 旧条目 → 插入新条目 → 按版本降序 + 12 在前重排」。
+- Jellyfin 端在「插件 → 目录」会看到新版本，点更新即可；旧包名带版本号，不会互相覆盖。
+- `main` 上的提交会触发 `build.yml` 做常规 CI（只验证编译与测试），发布逻辑只在 tag 上跑，两者不冲突。
+
+### 8.3 卸载 / 回滚
+
+删除插件目录并重启即可，插件不写数据库、不改媒体元数据。想要更细的控制：把 `EnableWebInjection` 关掉，前端立即恢复原生评分，服务端接口仍可单独使用。
+
+---
+
+## 9. 错误处理与日志
+
+**分层隔离**，任何一层失败都不会让详情页白屏或报错：
+
+| 层级 | 策略 |
+| --- | --- |
+| 单次 HTTP | 统一超时（`TimeoutSeconds`）+ `CancellationToken` 链接；区分 `timeout` / `cancelled` / `HttpRequestException` / 未知异常，分别落到不同日志级别 |
+| 单个数据源 | `RunAsync` 包裹 `try/catch`，异常转成 `SourceResult.Failed("source: 类型")` 写入响应 `errors[]`，其他来源照常返回 |
+| 数据源熔断 | 连续失败达 `FailureThreshold` → 冷却 `CooldownMinutes`，冷却期内直接跳过（Debug 日志说明跳过原因） |
+| 响应解析 | `JsonException` 单独捕获，按 `Debug` 记录并返回 `xxx: 响应解析失败`，绝不让解析异常冒泡 |
+| 聚合器 | 顶层 `try/catch` 兜底，返回部分结果 + `errors[]`；`OperationCanceledException` 单独放行（客户端断开不算错误） |
+| 中间件 | 注入异常 → 回退原始响应 + `Warning` 日志；响应体空/非 200 → 原样透传 |
+| 控制器 | 条目不存在 → 404；条目读取异常 → 500 + 结构化 `{error}`；logo 名称含 `.` `/` `\` `:` → 400 |
+
+**日志约定**（统一 `[Ratings]` 前缀，便于 `grep`）：
+
+```
+Info   [Ratings] 聚合完成 Fight Club (1999) 来源 5 个，错误 0 条，耗时 412ms
+Debug  [Ratings] mdblist 完成 7 条，388ms，error=-
+Warn   [Ratings] 请求超时 8s: movie.douban.com/subject_search
+Warn   [Ratings] douban 连续失败 3 次，冷却 10 分钟
+Warn   [Ratings] index.html 注入失败，已回退原始响应
+Error  [Ratings] 聚合评分失败: show|1399|-|2|5
+Info   [Ratings] 缓存维护完成，清理 12 条，剩余 301 条
+```
+
+密钥安全：`RatingsHttp` 在打日志前会把查询串里的 `*key*` / `*token*` 参数替换成 `***`（`SafePath`），URL 只记录 host + 脱敏 path。响应里的 `errors[]` 由 `ExposeErrors` 控制，生产环境可关。
+
+排障顺序建议：`/Ratings/v1/health` → Jellyfin 日志过滤 `[Ratings]` → 单独用 `/Ratings/v1/lookup?tmdbId=550&type=movie` 验证链路 → 再查前端控制台。
+
+---
+
+## 10. 已知限制
+
+1. **未在真实实例上做端到端点击验证**。已完成：双 TFM 编译、程序集引用核对、`dotnet test` 21 项用例（注入/压缩/嵌入资源/缓存/熔断/JSON 契约）。首次上机请按 8.1 第 7 步核对 `health`。
+2. **前端 DOM 依赖 Jellyfin Web 结构**（`.itemMiscInfo.itemMiscInfo-primary`、`.mediaInfoItem`）。Jellyfin 12 若整体换用新 UI 框架，`client.js` 的选择器需同步调整 —— 服务端接口不受影响。
+3. **豆瓣 / AlloCiné / 烂番茄 均为页面解析**，对方改版即失效；这类来源默认关闭，失败只影响自身。
+4. **`IStartupFilter` 注入依赖宿主在构建 Host 前收集插件服务**，10.11/12 的官方启动流程满足该前提；若被第三方启动器改写，按 8.3 降级。
+5. **不支持 10.10 及更早版本**（`BasePlugin` 构造签名不同）。
+6. 评分只做展示，不写回 `BaseItem.CriticRating`/`CommunityRating`，因此**排序/筛选仍按 Jellyfin 原生评分**。需要改元数据的场景应走 Provider 插件而非本插件。
+
+---
+
+## 11. 旧版用户脚本
+
+`legacy/` 目录下的 `jellyfin_ratings_v2.js` / `ratings.js` / `*.user.js` 保留原样，适用于不想装插件的场景：
+
+- Tampermonkey / Violentmonkey 安装 `.user.js`（仅该浏览器生效，API Key 在脚本里改）；
+- 或配合 `Jellyfin-JavaScript-Injector` 插件粘贴 `legacy/jellyfin_ratings_v2.js`。
+
+详细步骤见 [`docs/LEGACY_USERSCRIPT.md`](docs/LEGACY_USERSCRIPT.md)。插件版与脚本版**不要同时启用**，否则会出现两套评分图标。
+
+---
+
 
 ## 附：来源与许可
 

@@ -1,9 +1,10 @@
 name: build
 
+# 常驻 CI：只验证「能不能编译、测试过不过、包能不能打」。
+# 打标签发版由 .github/workflows/release.yml 负责，两边职责不重叠。
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 

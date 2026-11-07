@@ -2,17 +2,36 @@
 # 一键构建双版本插件包：
 #   dist/ratings-jf10.11.zip   -> Jellyfin 10.11.x (net9.0)
 #   dist/ratings-jf12.zip      -> Jellyfin 12.x    (net10.0)
+#
+# 只负责出包。发版由 .github/workflows/release.yml 完成：它把这两个 zip 重命名成
+# ratings-<version>-<slug>.zip 上传到 Release，并回写仓库根 manifest.json。
+#
+# 用法：
+#   bash build.sh                 # 版本号取 Directory.Build.props
+#   VERSION=1.0.1 bash build.sh   # 覆盖包内 meta.json 的版本号
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ="$ROOT/src/Jellyfin.Plugin.Ratings/Jellyfin.Plugin.Ratings.csproj"
 OUT="$ROOT/dist"
-VERSION="${VERSION:-1.0.0}"
 GUID="7f1e5b2a-9c3d-4e8b-a1f6-2d4c6b8e9a10"
+
+# 版本号唯一来源：Directory.Build.props 的 <Version>
+PROPS_VERSION="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' "$ROOT/Directory.Build.props" | head -n1)"
+VERSION="${VERSION:-${PROPS_VERSION:-1.0.0}}"
 
 NAME="Ratings"
 OVERVIEW="外部评分聚合：用 MDBList / TMDb / 豆瓣 / AniList 等来源替换 Jellyfin 内置评分"
 DESCRIPTION="服务端聚合多来源影视评分，缓存后由前端脚本渲染；支持单集评分与烂番茄/Metacritic 认证角标。"
+
+if command -v python3 >/dev/null 2>&1; then
+  PY=python3
+elif command -v python >/dev/null 2>&1; then
+  PY=python
+else
+  echo "需要 python3（仅用于打 zip），未找到" >&2
+  exit 1
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -43,7 +62,7 @@ package() {
 }
 EOF
 
-  python - "$work" "$OUT/ratings-$slug.zip" <<'PY'
+  "$PY" - "$work" "$OUT/ratings-$slug.zip" <<'PY'
 import os, sys, zipfile
 src, dst = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -61,12 +80,5 @@ package "net9.0"  "10.11.0.0" "jf10.11"
 package "net10.0" "12.0.0.0"  "jf12"
 
 echo
-echo "完成："
+echo "完成（版本 $VERSION）："
 ls -lh "$OUT"/*.zip | awk '{print "  " $9 "  " $5}'
-
-# 生成/刷新 Jellyfin 插件仓库清单（docs/manifest.json + docs/packages/*.zip）
-if command -v python >/dev/null 2>&1; then
-  echo
-  echo "==> 生成插件仓库清单"
-  python "$ROOT/tools/make-manifest.py"
-fi

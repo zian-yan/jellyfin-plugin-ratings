@@ -3,6 +3,10 @@ bin/
 obj/
 dist/
 
+# 发布工作流在 CI 里生成的临时文件
+release-assets/
+RELEASE_NOTES.md
+
 # 旧的用户脚本构建中间产物
 *.user.js.bak
 

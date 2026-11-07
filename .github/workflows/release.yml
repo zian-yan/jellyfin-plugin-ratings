@@ -1,0 +1,168 @@
+name: Release
+
+# 发布链路（与 jellyfin-plugin-faststrm 一致）：
+#   tag v*  →  校验版本号  →  测试 + 双 ABI 打包  →  上传 GitHub Release  →  回写 manifest.json 到 main
+# 插件包托管在 Release 资产上，清单走 raw.githubusercontent.com，不使用 GitHub Pages。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to release (e.g. v1.0.1)'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+
+      - name: Resolve and Verify Version
+        id: version
+        run: |
+          set -e
+
+          RAW_TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
+          TAG_NAME="v${RAW_TAG#v}"
+
+          # 只去掉第四段：1.0.1.0 -> 1.0.1，1.0.1 保持不变
+          normalize() {
+            if [[ "$1" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+              echo "${BASH_REMATCH[1]}"
+            else
+              echo "$1"
+            fi
+          }
+
+          CLEAN_VER=$(normalize "${TAG_NAME#v}")
+          FULL_VER="${CLEAN_VER}.0"
+
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "clean=${CLEAN_VER}" >> "$GITHUB_OUTPUT"
+          echo "full=${FULL_VER}" >> "$GITHUB_OUTPUT"
+
+          PROPS_VER=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props | head -n1)
+          META_VER=$(grep -oP '(?<="version": ")[^"]+' meta.json | head -n1)
+          BUILD_VER=$(grep -oP '(?<=^version: ")[^"]+' build.yaml | head -n1)
+          BUILD12_VER=$(grep -oP '(?<=^version: ")[^"]+' build.12.yaml | head -n1)
+
+          echo "tag=${TAG_NAME} clean=${CLEAN_VER} props=${PROPS_VER} meta=${META_VER} build=${BUILD_VER} build12=${BUILD12_VER}"
+
+          for pair in "Directory.Build.props:${PROPS_VER}" "meta.json:${META_VER}" "build.yaml:${BUILD_VER}" "build.12.yaml:${BUILD12_VER}"; do
+            file="${pair%%:*}"
+            value="${pair#*:}"
+            norm_val=$(normalize "$value")
+            if [ "$norm_val" != "$CLEAN_VER" ]; then
+              echo "::error::版本不一致：${file} 是 ${value}（归一化 ${norm_val}），tag 是 ${TAG_NAME}（期望 ${CLEAN_VER}）"
+              exit 1
+            fi
+          done
+
+      - name: Restore
+        run: dotnet restore Jellyfin.Plugin.Ratings.sln
+
+      - name: Test
+        run: dotnet test Jellyfin.Plugin.Ratings.sln -c Release --nologo
+
+      - name: Package plugin zips
+        env:
+          VERSION: ${{ steps.version.outputs.clean }}
+        run: bash build.sh
+
+      - name: Collect Release Assets
+        env:
+          FULL_VER: ${{ steps.version.outputs.full }}
+        run: |
+          set -e
+
+          mkdir -p release-assets
+          for slug in jf10.11 jf12; do
+            src="dist/ratings-${slug}.zip"
+            if [ ! -f "$src" ]; then
+              echo "::error::构建产物 ${src} 不存在"
+              exit 1
+            fi
+            cp "$src" "release-assets/ratings-${FULL_VER}-${slug}.zip"
+          done
+
+          ls -lh release-assets
+
+      - name: Extract Release Notes
+        env:
+          CLEAN_VER: ${{ steps.version.outputs.clean }}
+        run: |
+          set -e
+
+          # 精确匹配 "## [x.y.z]" 标题，避免 [] 被当成正则字符组
+          if grep -qF "## [$CLEAN_VER]" CHANGELOG.md; then
+            awk -v ver="## [$CLEAN_VER]" '
+              index($0, ver) == 1 { flag = 1; next }
+              flag && /^## \[/ { flag = 0 }
+              flag { print }
+            ' CHANGELOG.md > RELEASE_NOTES.md
+          fi
+
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::warning::CHANGELOG.md 中没有找到 ${CLEAN_VER} 段落，使用默认说明"
+            printf 'v%s\n' "$CLEAN_VER" > RELEASE_NOTES.md
+          fi
+
+          echo "----- RELEASE_NOTES.md -----"
+          cat RELEASE_NOTES.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: v${{ steps.version.outputs.clean }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Plugin Manifest
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 切回 main 更新清单；工作流只由 tag 触发，提交回 main 不会造成循环
+          git fetch origin main
+          git checkout -B main origin/main
+
+          python3 scripts/update_manifest.py
+
+          if git diff --quiet -- manifest.json; then
+            echo "manifest.json 无变化"
+          else
+            git add manifest.json
+            git commit -m "chore: update plugin manifest for ${RELEASE_TAG}"
+            git push origin main
+          fi
