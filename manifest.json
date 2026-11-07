@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/assets/icon.png",
     "versions": [
       {
+        "version": "1.2.3.0",
+        "changelog": "- 修复：详情页从不显示 TMDb 评分——MDBList 返回的 tmdb 分数被丢弃，电影与剧集页始终缺这一个来源。\n- 优化：分集页优先显示该集 TMDb 评分，不再与整剧分重复出现两个 TMDb 图标。\n- 优化：配置页的来源列表补上 TMDb，「单集/整剧」改为更准确的「分集 / 分季」。",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/zian-yan/jellyfin-plugin-ratings/releases/download/v1.2.3/ratings-1.2.3.0-jf12.zip",
+        "checksum": "2e846f59d5edadd646715ca3935f5dd8",
+        "timestamp": "2026-11-07T09:50:30Z"
+      },
+      {
         "version": "1.2.2.0",
         "changelog": "- 修复：先看过别的条目再进详情页时，首次打开可能只剩空白评分区，要刷新才出现。\n- 优化：外部评分只插入到当前实际显示的详情页信息区，不再受后台保留的旧页面影响。\n- 优化：原生评分只在外部评分确实显示出来后才隐藏，不会出现两边都没有。\n- 优化：切换页面、返回详情页、页面内容刷新后都会自动重新对齐显示。",
         "targetAbi": "12.0.0.0",
