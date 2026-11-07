@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/assets/icon.png",
     "versions": [
       {
+        "version": "1.2.0.0",
+        "changelog": "修复「详情页完全没有评分、日志里也看不到插件活动」的静默失效。\n\n### 🐛 修复\n\n- **注入被 304 吞掉**：Jellyfin 给 `index.html` 设了 `Cache-Control: no-cache`，浏览器每次都会带 `If-None-Match` 回来验证，静态文件中间件直接回 304（无响应体），原逻辑见「非 200」就跳过 —— 于是浏览器永远用缓存里那份不带脚本的 `index.html`，插件侧一行日志都没有。现在主动摘掉条件请求头（`If-None-Match` / `If-Modified-Since` / `If-Range` / `Range` 等），强制走 200 + 完整 HTML。\n- **反代子路径部署注入地址错误**：`BaseUrl` 映射发生在更靠后的管道里，中间件拿到的路径还带前缀，只拼 `PathBase` 会得到 `/Ratings/v1/client.js` 这种错地址（404 → 无评分）。改为从请求路径反推前缀。\n- **前端取不到 itemId**：原来只认 hash 里的 `?id=`，路径式路由（`/details/<guid>`）直接静默不取数。现在兼容 hash / path / URL 中任意 GUID 片段。\n- **401 不再干等**：数据接口返回 401 时自动改用 `api_key` 查询参数重试一次。\n\n### 🔍 可观测性\n\n- 启动日志新增「Web 注入中间件已挂载」——出现在日志里就说明中间件确实进了管道。\n- 注入落空（状态码非 200、找不到 `</body>`）从静默改为 WARNING，不再无声失败。\n- `/Ratings/v1/health` 新增 `middlewareMounted` / `indexRequests` / `patched` / `lastIndexRequest`，一次就能判断问题在「没注入」还是「取数失败」。\n- 未认证请求从 Debug 提到 Warning（每分钟最多一条），401 一眼可见。\n- 前端控制台：找不到插入点会打印诊断信息；`jellyfinRatings.status()` 可随时查看当前状态，`window.__jellyfinRatingsDebug = true` 打开过程日志。",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/zian-yan/jellyfin-plugin-ratings/releases/download/v1.2.0/ratings-1.2.0.0-jf12.zip",
+        "checksum": "bdb23ca13d43a5af5651f91e2c353125",
+        "timestamp": "2026-11-07T09:01:39Z"
+      },
+      {
         "version": "1.1.0.0",
         "changelog": "首次加载体验与接口安全优化。\n\n### 🚀 首屏加载\n\n- 缓存改为内存 + 磁盘双层（`{DataPath}/ratings/ratings-cache.json`），重启后不再从零开始。\n- 过期旧值秒开（stale-while-revalidate）：缓存过期后先返回旧数据、后台刷新，详情页不再因缓存到期而卡顿。\n- 进入详情页立刻占位，取到外部评分再渲染，不再出现「先显示 Jellyfin 原始评分、几秒后被替换」的跳变；同一会话内回看直接预渲染。\n- 关键路径并行：IMDb ID 解析与 MDBList 主数据同时发起；增强源增加宽限期（`EnrichmentGraceMs`，默认 1200ms），超时的来源转后台继续并回填缓存。\n\n### 🔒 安全\n\n- 查询接口（item / lookup / health）默认要求 Jellyfin 登录态，并按客户端限流（默认 120 次/分钟，可配置），避免被当作免费的外部 API 代理刷光配额。\n- Provider ID 增加白名单校验，阻断拼进外部 URL / SPARQL 时的路径注入。\n- 修复 SSRF：烂番茄链接来自公开可编辑的 Wikidata，现在只接受 `https` + `*.rottentomatoes.com`。\n- logo 接口改为嵌入资源白名单，杜绝匿名请求把缓存字典撑爆。\n- 外部可控文本（片名、用户名）写入日志前去除控制字符并截断；错误摘要默认关闭。\n- 注入标签里的 `PathBase` 做 HTML 编码，避免反代路径前缀注入脚本。\n\n### 🐛 修复\n\n- `Dispose` 时缓存未落盘（`Flush` 被自身的 disposed 判断挡住）。\n- 磁盘缓存加载未完成时刷盘会用空内存覆盖磁盘文件。\n- 宽限期返回的部分结果不写缓存，导致紧接着的访问重复请求全部外部接口。\n- 注入状态关闭后不复位，health 一直显示注入仍生效。\n\n### ⚠️ 升级注意\n\n- `RequireAuthentication` 默认改为 `true`。浏览器端由注入脚本自动带 token，无感知；用 `curl` / 第三方脚本直接调用 `/Ratings/v1/lookup` 时需带 `api_key`。\n- `ExposeErrors` 默认改为 `false`，需要排障时到设置里手动打开。\n- 缓存从纯内存改为落盘，升级后首次启动仍是空缓存，需要重新抓一轮。",
         "targetAbi": "12.0.0.0",
