@@ -63,3 +63,10 @@ package "net10.0" "12.0.0.0"  "jf12"
 echo
 echo "完成："
 ls -lh "$OUT"/*.zip | awk '{print "  " $9 "  " $5}'
+
+# 生成/刷新 Jellyfin 插件仓库清单（docs/manifest.json + docs/packages/*.zip）
+if command -v python >/dev/null 2>&1; then
+  echo
+  echo "==> 生成插件仓库清单"
+  python "$ROOT/tools/make-manifest.py"
+fi

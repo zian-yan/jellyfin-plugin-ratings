@@ -294,22 +294,69 @@ jprm plugin build --spec build.12.yaml   # 12
    - `sources.mdblist.keyConfigured: true` → 密钥读到了；
    - 随便点开一部电影后 `cacheEntries` 应大于 0。
 
-### 8.2 通过插件仓库安装（可选）
+### 8.2 通过插件仓库安装（推荐）
 
-把 `build.sh` 产出的两个 zip 与 `manifest.json` 放到任意 HTTPS 静态托管，在 Jellyfin「插件 → 仓库」里填 URL 即可。`manifest.json` 需按版本分别给 `targetAbi`：
+仓库清单已随代码一起发布，直接把这个地址加到 Jellyfin 即可：
+
+```
+https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/docs/manifest.json
+```
+
+操作步骤：
+
+1. 控制台 → **插件** → 右上角 **仓库**（Repositories）→ 点 **+**
+2. 名称填 `Ratings`，URL 粘贴上面那行 → **保存**
+3. 切到 **目录**（Catalog）标签，列表里会出现 **Ratings**；点 **安装**
+4. 按提示重启 Jellyfin
+5. 控制台 → 插件 → Ratings → 设置，填 API Key 后保存
+
+插件会自动按你的服务器版本挑包：
+
+| 你的 Jellyfin | 安装到的包 |
+| --- | --- |
+| 10.11.x | `net9.0` 包（targetAbi 10.11.0.0） |
+| 12.x | `net10.0` 包（targetAbi 12.0.0.0） |
+| ≤ 10.10 | 列表里不显示（不支持） |
+
+> 若你的网络无法直连 `raw.githubusercontent.com`，把 `docs/` 目录整个放到任意 HTTPS 静态托管（GitHub Pages、对象存储、Nginx），
+> 用 `REPO_BASE_URL=https://你的域名` 重新生成清单：`python tools/make-manifest.py`，然后把新的 `manifest.json` 地址加进 Jellyfin。
+>
+> 启用 GitHub Pages 的写法：仓库 Settings → Pages → Source 选 `Deploy from a branch` → 分支 `main`、目录 `/docs`，
+> 之后仓库地址就是 `https://zian-yan.github.io/jellyfin-plugin-ratings/manifest.json`；
+> 生成时加 `REPO_BASE_URL=https://zian-yan.github.io/jellyfin-plugin-ratings` 即可让 `sourceUrl` 指向 Pages。
+
+清单结构（`docs/manifest.json`，由 `tools/make-manifest.py` 自动生成，含真实 MD5）：
 
 ```json
 [
   {
     "guid": "7f1e5b2a-9c3d-4e8b-a1f6-2d4c6b8e9a10",
     "name": "Ratings",
+    "imageUrl": "…/docs/icon.png",
     "versions": [
-      { "version": "1.0.0.0", "targetAbi": "10.11.0.0", "sourceUrl": "https://…/ratings-jf10.11.zip", "checksum": "…", "timestamp": "2026-11-07T00:00:00Z" },
-      { "version": "1.0.0.0", "targetAbi": "12.0.0.0",  "sourceUrl": "https://…/ratings-jf12.zip",    "checksum": "…", "timestamp": "2026-11-07T00:00:00Z" }
+      { "version": "1.0.0.0", "targetAbi": "12.0.0.0",  "sourceUrl": "…/ratings-1.0.0.0-jf12.zip",    "checksum": "f117…", "timestamp": "…" },
+      { "version": "1.0.0.0", "targetAbi": "10.11.0.0", "sourceUrl": "…/ratings-1.0.0.0-jf10.11.zip", "checksum": "2726…", "timestamp": "…" }
     ]
   }
 ]
 ```
+
+**`versions` 的顺序不能调换**：Jellyfin 的选版逻辑是「先过滤 `TargetAbi ≤ 服务器版本`，再按版本号降序取第一条」
+（`InstallationManager.GetPackageVersions`）。两个 ABI 版本号相同，`OrderByDescending` 又是稳定排序，
+所以 12 的条目必须写在前面 —— 10.11 服务器会把 12 条目过滤掉，12 服务器则两条都通过、先命中 12 条目。
+
+### 8.2.1 发布新版本
+
+```bash
+# 1. 改版本号（唯一位置）
+#    Directory.Build.props → <Version>1.0.1</Version>
+# 2. 重建 + 重新生成清单（会更新 md5 与 timestamp，并覆盖 docs/packages 下的同名包）
+bash build.sh
+# 3. 提交 docs/manifest.json 与 docs/packages/*.zip
+git add docs && git commit -m "release: 1.0.1 [skip ci]" && git push
+```
+
+Jellyfin 端在「插件 → 目录」里会看到新版本，点更新即可（旧版本缓存的包名带版本号，不会互相覆盖）。
 
 ### 8.3 卸载 / 回滚
 
