@@ -3,7 +3,7 @@
   "name": "Ratings",
   "description": "服务端聚合多来源影视评分，缓存后由前端脚本渲染；支持单集评分与烂番茄/Metacritic 认证角标。",
   "overview": "外部评分聚合：用 MDBList / TMDb / 豆瓣 / AniList 等来源替换 Jellyfin 内置评分",
-  "version": "1.2.0.0",
+  "version": "1.2.1.0",
   "targetAbi": "12.0.0.0",
   "owner": "zian-yan",
   "category": "General",

@@ -6,11 +6,13 @@
  *   - API Key、代理、缓存全部留在服务端，浏览器只发一个同源请求；
  *   - 只做「取数 → 渲染 → 隐藏内置星级」，逻辑尽量短，降低被 Jellyfin 前端改版打断的概率。
  *
- * v1.1.1 增强的抗改版能力：
- *   - itemId 不再只认 hash 里的 ?id=，路径式路由（/details/<guid>）与任意 GUID 片段都能识别；
- *   - 插入点找不到时不再静默什么都不做，控制台会给出可复制的诊断信息；
- *   - 数据接口返回 401 时自动换成 api_key 查询参数重试一次；
- *   - 设置 window.__jellyfinRatingsDebug = true 可看到完整过程日志。
+ * v1.2.1 的「首帧落到不可见节点」修复：
+ *   Jellyfin Web 的详情页会先把元信息区渲染一次、拿到完整条目数据后再重绘，
+ *   期间同一选择器可能命中一个還沒显示（或已废弃）的节点。旧逻辑只看「容器存不存在」，
+ *   一旦容器插进了这种节点，就会永远判定「已渲染」而不再重试 ——
+ *   表现就是：原始评分被隐了、插件评分没出现，刷新一次（走 sessionStorage 预渲染）才正常。
+ *   现在所有「已渲染」判定都要求容器**真的可见**（isConnected + getClientRects + computedStyle），
+ *   不可见就删掉重来，并在取到数据后按 200/500/1200/2500ms 重试重新挂载。
  */
 (function () {
     'use strict';
@@ -20,12 +22,14 @@
     }
     window.__jellyfinRatingsLoaded = true;
 
-    var VERSION = '1.1.1';
+    var VERSION = '1.2.1';
     var API = 'Ratings/v1';
     var CONTAINER_CLASS = 'jf-ratings-container';
     var SCAN_INTERVAL = 800;
     var CLIENT_CACHE_TTL = 30 * 60 * 1000;
     var BUILTIN_GUARD_MS = 8000;
+    var RETRY_DELAYS = [200, 500, 1200, 2500];
+    var MAX_ATTEMPTS = 12;
 
     var HIDE_HARD = 1;   // 有插件数据：彻底收起原生评分，释放占位
     var HIDE_SOFT = 2;   // 等待中：仅不可见，保留占位，避免布局抖动
@@ -47,7 +51,10 @@
         config: null,
         renderedItemId: null,
         pendingItemId: null,
-        warnedItemId: null
+        warnedItemId: null,
+        lastData: null,
+        attempts: 0,
+        attemptItemId: null
     };
 
     function debug() {
@@ -57,6 +64,30 @@
         var args = Array.prototype.slice.call(arguments);
         args.unshift('[Ratings]');
         console.log.apply(console, args);
+    }
+
+    /**
+     * 元素是否真的能被用户看到。
+     * 这是本文件最关键的一个判断：details 页的节点会先插入后显示/被替换，
+     * 只看 querySelector 命中会让「插进了隐藏节点」被误判成已渲染。
+     */
+    function isVisible(element) {
+        if (!element || element.isConnected === false) {
+            return false;
+        }
+        if (typeof element.getClientRects === 'function' && element.getClientRects().length === 0) {
+            return false;
+        }
+        var style = window.getComputedStyle ? window.getComputedStyle(element) : null;
+        if (style) {
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') {
+                return false;
+            }
+            if (style.opacity !== '' && Number(style.opacity) === 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     function apiUrl(path) {
@@ -158,10 +189,33 @@
             });
     }
 
+    /** 所有可见的评分容器（正常情况下只应有一个）。 */
+    function currentContainer() {
+        var nodes = document.querySelectorAll('.' + CONTAINER_CLASS);
+        for (var i = 0; i < nodes.length; i++) {
+            if (isVisible(nodes[i])) {
+                return nodes[i];
+            }
+        }
+        return null;
+    }
+
+    /** 清掉插在隐藏/已废弃节点里的容器，避免它们冒充「已渲染」。 */
+    function dropInvisibleContainers() {
+        var dropped = 0;
+        Array.prototype.forEach.call(document.querySelectorAll('.' + CONTAINER_CLASS), function (node) {
+            if (!isVisible(node)) {
+                node.remove();
+                dropped++;
+            }
+        });
+        return dropped;
+    }
+
     function findAnchor() {
         for (var i = 0; i < ANCHOR_SELECTORS.length; i++) {
             var element = document.querySelector(ANCHOR_SELECTORS[i]);
-            if (!element) {
+            if (!element || !isVisible(element)) {
                 continue;
             }
 
@@ -174,7 +228,7 @@
     }
 
     function ensureContainer(anchor) {
-        var existing = document.querySelector('.' + CONTAINER_CLASS);
+        var existing = currentContainer();
         if (existing) {
             return existing;
         }
@@ -184,7 +238,6 @@
         container.style.cssText = 'display:inline-flex;align-items:center;flex-wrap:wrap;margin-left:6px;';
 
         if (anchor.inside) {
-            container.style.display = 'inline-flex';
             anchor.host.appendChild(container);
         } else if (anchor.host.parentNode) {
             anchor.host.insertAdjacentElement('afterend', container);
@@ -275,7 +328,15 @@
         return null;
     }
 
+    /**
+     * 渲染并返回是否真的显示出来了。
+     * 返回 false 时调用方不应隐藏内置评分——否则会出现「原始评分没了、插件评分也没出现」。
+     */
     function render(data, anchor) {
+        if (!anchor) {
+            return false;
+        }
+
         var config = state.config || {};
         var container = ensureContainer(anchor);
         container.innerHTML = '';
@@ -317,12 +378,29 @@
             container.appendChild(hint);
         }
 
+        // 一条都没有也没有提示语：没什么可显示的，不算失败，也别再重试
+        if (container.childElementCount === 0) {
+            container.remove();
+            if (config.hideBuiltInRatings !== false) {
+                setBuiltInHidden(document, 0);
+            }
+            return true;
+        }
+
+        // 插进去不等于看得见：节点可能在一个还没显示（或已废弃）的父级里
+        if (!isVisible(container)) {
+            debug('插入点不可见，放弃这次渲染，稍后重试');
+            container.remove();
+            return false;
+        }
+
         // 只有我们自己有数据时才隐藏内置星级，否则保留 Jellyfin 原生评分
         if (config.hideBuiltInRatings !== false) {
             setBuiltInHidden(document, hasData ? HIDE_HARD : 0);
         }
 
-        debug('渲染完成', { itemId: data && data.itemId, count: container.childElementCount });
+        debug('渲染完成', { count: container.childElementCount });
+        return true;
     }
 
     function clearRendered() {
@@ -343,15 +421,71 @@
         console.warn('[Ratings] ' + message, extra || '');
     }
 
+    /**
+     * 数据到手后尝试挂载；挂不上就按 RETRY_DELAYS 重试。
+     * 详情页在条目数据加载完后还会重绘一次，首帧插进去的节点可能被丢掉，
+     * 这类「数据有、位置没了」的情况全部由这里兜住。
+     */
+    function mount(itemId, data, attempt) {
+        if (state.attemptItemId !== itemId) {
+            state.attemptItemId = itemId;
+            state.attempts = 0;
+        }
+
+        if (currentItemId() !== itemId) {
+            return;
+        }
+
+        state.attempts = attempt;
+
+        var anchor = findAnchor();
+        if (render(data, anchor)) {
+            state.renderedItemId = itemId;
+            state.attempts = 0;
+            return;
+        }
+
+        if (attempt >= MAX_ATTEMPTS) {
+            warnOnce(itemId, '多次尝试仍无法把评分插入详情页，请反馈以下信息：', {
+                url: location.href,
+                anchors: ANCHOR_SELECTORS
+            });
+            setBuiltInHidden(document, 0);
+            return;
+        }
+
+        var delay = RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)];
+        window.setTimeout(function () {
+            mount(itemId, data, attempt + 1);
+        }, delay);
+    }
+
     function scan() {
         var itemId = currentItemId();
         if (!itemId) {
             return;
         }
 
+        var visibleContainer = currentContainer();
+        if (state.renderedItemId === itemId && visibleContainer) {
+            return;
+        }
+
+        // 走到这里说明：没渲染过 / 渲染过但不可见 / 换了条目。
+        // 「不可见」是最坑的一种：容器在 DOM 里却看不见，旧逻辑会一直判定已渲染。
+        if (visibleContainer || state.renderedItemId === itemId) {
+            clearRendered();
+        } else {
+            dropInvisibleContainers();
+        }
+
+        if (state.pendingItemId === itemId) {
+            return;
+        }
+
         var anchor = findAnchor();
         if (!anchor) {
-            // 这条以前是静默 return：页面没评分、日志也没有任何线索。
+            // 以前这里是静默 return：页面没评分、日志也没有任何线索
             warnOnce(itemId, '找到了条目但没有定位到详情页元信息区，无法插入评分。请把这条信息反馈给插件作者：', {
                 url: location.href,
                 selectors: ANCHOR_SELECTORS
@@ -359,31 +493,22 @@
             return;
         }
 
-        if (state.renderedItemId === itemId && document.querySelector('.' + CONTAINER_CLASS)) {
-            return;
-        }
-
-        if (state.pendingItemId === itemId) {
-            return;
-        }
-
         state.pendingItemId = itemId;
         debug('开始取数', itemId);
 
-        // ① 手上已有上次的结果就先渲染，不空等网络
-        var local = readClientCache(itemId);
+        // ① 手上已有结果就先渲染，不空等网络（刷新/回看走的就是这条）
+        var local = state.lastData && state.lastData.itemId === itemId ? state.lastData : readClientCache(itemId);
         if (local) {
-            state.renderedItemId = itemId;
-            render(local, anchor);
+            mount(itemId, local, 0);
         } else if ((state.config || {}).hideBuiltInRatings !== false) {
             // ② 没有缓存时先软隐藏原生评分：避免「先看到 Jellyfin 评分、几秒后被替换」的跳变
             setBuiltInHidden(document, HIDE_SOFT);
         }
 
-        // ③ 兜底：接口异常/超时时不能让原生评分一直不可见。
+        // ③ 兜底：接口异常/超时时不能让原生评分一直不可见
         var guard = window.setTimeout(function () {
             guard = null;
-            if (state.pendingItemId === itemId && !local) {
+            if (state.pendingItemId === itemId && !currentContainer()) {
                 setBuiltInHidden(document, 0);
             }
         }, BUILTIN_GUARD_MS);
@@ -402,26 +527,24 @@
                 state.pendingItemId = null;
                 window.clearTimeout(guard);
                 if (!data) {
-                    setBuiltInHidden(document, 0);
+                    if (!currentContainer()) {
+                        setBuiltInHidden(document, 0);
+                    }
                     return;
                 }
 
-                var target = findAnchor();
-                if (!target) {
-                    warnOnce(itemId, '取到数据但插入点消失了（页面又被重绘），本次放弃渲染。');
-                    setBuiltInHidden(document, 0);
-                    return;
-                }
-
-                state.renderedItemId = itemId;
+                state.lastData = data;
                 writeClientCache(itemId, data);
-                render(data, target);
+                mount(itemId, data, 0);
             })
             .catch(function (error) {
                 state.pendingItemId = null;
                 window.clearTimeout(guard);
                 debug('取数失败', error);
-                setBuiltInHidden(document, 0);
+                // 已经用缓存渲染出来的话，不要把内置评分放回来（会变成两套评分并存）
+                if (!currentContainer()) {
+                    setBuiltInHidden(document, 0);
+                }
             });
     }
 
@@ -465,8 +588,10 @@
                 url: location.href,
                 itemId: currentItemId(),
                 anchor: !!findAnchor(),
+                container: !!currentContainer(),
                 renderedItemId: state.renderedItemId,
                 pendingItemId: state.pendingItemId,
+                attempts: state.attempts,
                 config: state.config,
                 apiBase: apiUrl(API)
             };
