@@ -2,7 +2,6 @@
 
 把原先的浏览器用户脚本 `jellyfin_ratings_v2.js` 重构成**原生 Jellyfin 服务端插件**，同时兼容 **Jellyfin 10.11（net9.0）** 与 **Jellyfin 12（net10.0）**。
 
-> 旧版脚本保留在 `legacy/` 目录，作为对照与降级方案，见文末「旧版用户脚本」。
 
 ---
 
