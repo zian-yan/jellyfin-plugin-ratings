@@ -3,6 +3,18 @@
 版本号与 `Directory.Build.props` 的 `<Version>` 保持一致；发布时从本文档抽取对应段落作为
 Release 说明与 `manifest.json` 的 `changelog` 字段。
 
+## [1.2.2]
+
+按 `Jellyfin.Plugin.MDBList_Ratings` 的锚点思路重写详情页渲染，彻底解决「第一次进详情页原始评分消失、插件评分不出来」。
+
+### 🐛 修复
+
+- **锚点选错页面**：Jellyfin Web 会把**旧页面留在 DOM 里并隐藏**，`document.querySelector('.itemMiscInfo-primary')` 第一个命中的常常是隐藏页（甚至上一部片的残留）。旧逻辑在其中插入容器，同时全局隐藏了当前页的内置评分 —— 于是「原始评分没了、插件评分也不出现」，刷新（只剩当前页在 DOM）才正常。现在只在「可见 **且** 含内置评分元素（`starRatingContainer` / `mediaInfoCriticRating`）」的盒子里工作。
+- **隐藏作用域收敛到该盒子**：不再全局隐藏内置评分，避免误伤隐藏页/其它条目。
+- 容器改用 `mediaInfoItem` 类，直接继承 Jellyfin 自己的间距与排版；同时带 `data-jf-itemid` 做幂等复渲染。
+- **重扫不再只看 itemId**：同一条目也会被 Jellyfin 重绘（占位 → 完整数据），改为无条件防抖重扫（`MutationObserver` + `viewshow` / `pageshow` / `hashchange` / `popstate`）。
+- 容器所在盒子与当前显示的盒子不一致时自动重建，避免停在隐藏页里。
+
 ## [1.2.1]
 
 修复「第一次进详情页：原始评分被隐藏，插件评分却要刷新一次才出现」。
