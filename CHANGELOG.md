@@ -3,6 +3,25 @@
 版本号与 `Directory.Build.props` 的 `<Version>` 保持一致；发布时从本文档抽取对应段落作为
 Release 说明与 `manifest.json` 的 `changelog` 字段。
 
+## [1.2.0]
+
+修复「详情页完全没有评分、日志里也看不到插件活动」的静默失效。
+
+### 🐛 修复
+
+- **注入被 304 吞掉**：Jellyfin 给 `index.html` 设了 `Cache-Control: no-cache`，浏览器每次都会带 `If-None-Match` 回来验证，静态文件中间件直接回 304（无响应体），原逻辑见「非 200」就跳过 —— 于是浏览器永远用缓存里那份不带脚本的 `index.html`，插件侧一行日志都没有。现在主动摘掉条件请求头（`If-None-Match` / `If-Modified-Since` / `If-Range` / `Range` 等），强制走 200 + 完整 HTML。
+- **反代子路径部署注入地址错误**：`BaseUrl` 映射发生在更靠后的管道里，中间件拿到的路径还带前缀，只拼 `PathBase` 会得到 `/Ratings/v1/client.js` 这种错地址（404 → 无评分）。改为从请求路径反推前缀。
+- **前端取不到 itemId**：原来只认 hash 里的 `?id=`，路径式路由（`/details/<guid>`）直接静默不取数。现在兼容 hash / path / URL 中任意 GUID 片段。
+- **401 不再干等**：数据接口返回 401 时自动改用 `api_key` 查询参数重试一次。
+
+### 🔍 可观测性
+
+- 启动日志新增「Web 注入中间件已挂载」——出现在日志里就说明中间件确实进了管道。
+- 注入落空（状态码非 200、找不到 `</body>`）从静默改为 WARNING，不再无声失败。
+- `/Ratings/v1/health` 新增 `middlewareMounted` / `indexRequests` / `patched` / `lastIndexRequest`，一次就能判断问题在「没注入」还是「取数失败」。
+- 未认证请求从 Debug 提到 Warning（每分钟最多一条），401 一眼可见。
+- 前端控制台：找不到插入点会打印诊断信息；`jellyfinRatings.status()` 可随时查看当前状态，`window.__jellyfinRatingsDebug = true` 打开过程日志。
+
 ## [1.1.0]
 
 首次加载体验与接口安全优化。

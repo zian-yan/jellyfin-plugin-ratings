@@ -2,7 +2,7 @@
 # jprm 构建规格：仅 Jellyfin 12（net10.0）
 name: "Ratings"
 guid: "7f1e5b2a-9c3d-4e8b-a1f6-2d4c6b8e9a10"
-version: "1.1.0.0"
+version: "1.2.0.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "外部评分聚合：用 MDBList / TMDb / 豆瓣 / AniList 等来源替换 Jellyfin 内置评分"

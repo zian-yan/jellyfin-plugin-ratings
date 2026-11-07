@@ -34,6 +34,9 @@ public class RatingsController : ControllerBase
 
     private static readonly ConcurrentDictionary<string, byte[]> LogoCache = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>401 告警的节流时间戳（Environment.TickCount64）。</summary>
+    private static long _lastAuthWarning;
+
     /// <summary>
     /// 嵌入资源里的合法 logo 名集合。这个接口是匿名的，必须白名单校验：
     /// 否则任意 name 都会被 <see cref="LogoCache"/> 记住一条（即使是空数组），
@@ -250,6 +253,10 @@ public class RatingsController : ControllerBase
                 serverVersion = JellyfinCompat.ServerVersion.ToString(),
                 targetFramework = "net10.0",
                 injectionActive = RatingsRuntimeState.InjectionActive,
+                middlewareMounted = RatingsRuntimeState.MiddlewareMounted,
+                indexRequests = RatingsRuntimeState.IndexRequests,
+                patched = RatingsRuntimeState.Patched,
+                lastIndexRequest = RatingsRuntimeState.LastIndex,
                 webInjectionEnabled = config.EnableWebInjection,
                 cacheEntries = _aggregator.Cache.Count,
                 cachePersistent = _aggregator.Cache.Persistent,
@@ -272,6 +279,10 @@ public class RatingsController : ControllerBase
             serverVersion = JellyfinCompat.ServerVersion.ToString(),
             targetFramework = "net10.0",
             injectionActive = RatingsRuntimeState.InjectionActive,
+            middlewareMounted = RatingsRuntimeState.MiddlewareMounted,
+            indexRequests = RatingsRuntimeState.IndexRequests,
+            patched = RatingsRuntimeState.Patched,
+            lastIndexRequest = RatingsRuntimeState.LastIndex,
             webInjectionEnabled = config.EnableWebInjection,
             cacheEntries = _aggregator.Cache.Count,
             cachePersistent = _aggregator.Cache.Persistent,
@@ -318,10 +329,35 @@ public class RatingsController : ControllerBase
         var authenticated = User?.Identity?.IsAuthenticated ?? false;
         if (!authenticated)
         {
-            _logger.LogDebug("[Ratings] 未认证请求被拒绝: {Path}", Request.Path);
+            WarnUnauthenticatedOnce();
         }
 
         return authenticated;
+    }
+
+    /// <summary>
+    /// 401 是这个插件最常见的「页面没评分」原因（前端没拿到/没带上 token），
+    /// 原来只记 Debug，默认日志等级下完全看不见。现在每分钟最多一条 Warning，
+    /// 既能在日志里直接看到，又不会被刷屏。
+    /// </summary>
+    private void WarnUnauthenticatedOnce()
+    {
+        var now = Environment.TickCount64;
+        var last = Interlocked.Read(ref _lastAuthWarning);
+
+        if (now - last < 60_000)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _lastAuthWarning, now, last) != last)
+        {
+            return;
+        }
+
+        _logger.LogWarning(
+            "[Ratings] 未认证请求被拒绝：{Path}（前端未携带有效 token；如不需要鉴权可在插件设置里关闭「API 需要登录态」）",
+            LogText.Clean(Request.Path.ToString()));
     }
 
     /// <summary>
@@ -427,12 +463,32 @@ public class RatingsController : ControllerBase
     }
 }
 
-/// <summary>运行期状态标记，供健康检查判断注入是否真的生效。</summary>
+/// <summary>
+/// 运行期状态标记，供健康检查判断注入是否真的生效。
+///
+/// 这里的每个字段都对应一个「为什么页面没出现评分」的具体环节：
+///   middlewareMounted —— 中间件有没有进管道（false 说明宿主在插件注册前就 Build 完了）
+///   indexRequests     —— 中间件被 index.html 请求命中过几次（0 说明中间件在管道里但从没匹配上）
+///   patched           —— 真正改写成功的次数（0 而 indexRequests &gt; 0，说明请求不是 200 或没有 &lt;/body&gt;）
+/// 有了这三个数，不必再猜是「没注入」还是「注入了但取数失败」。
+/// </summary>
 public static class RatingsRuntimeState
 {
     private static int _injectionActive;
+    private static int _middlewareMounted;
+    private static long _indexRequests;
+    private static long _patched;
+    private static string _lastIndex = "-";
 
     public static bool InjectionActive => System.Threading.Volatile.Read(ref _injectionActive) == 1;
+
+    public static bool MiddlewareMounted => System.Threading.Volatile.Read(ref _middlewareMounted) == 1;
+
+    public static long IndexRequests => System.Threading.Interlocked.Read(ref _indexRequests);
+
+    public static long Patched => System.Threading.Interlocked.Read(ref _patched);
+
+    public static string LastIndex => System.Threading.Volatile.Read(ref _lastIndex);
 
     internal static void MarkInjectionActive() => System.Threading.Interlocked.Exchange(ref _injectionActive, 1);
 
@@ -441,4 +497,14 @@ public static class RatingsRuntimeState
     /// 排查「关掉了为什么还在注入」时会非常误导。
     /// </summary>
     internal static void MarkInjectionDisabled() => System.Threading.Interlocked.Exchange(ref _injectionActive, 0);
+
+    internal static void MarkMiddlewareMounted() => System.Threading.Interlocked.Exchange(ref _middlewareMounted, 1);
+
+    internal static void MarkIndexRequest(string description)
+    {
+        System.Threading.Interlocked.Increment(ref _indexRequests);
+        System.Threading.Volatile.Write(ref _lastIndex, description);
+    }
+
+    internal static void MarkPatched() => System.Threading.Interlocked.Increment(ref _patched);
 }

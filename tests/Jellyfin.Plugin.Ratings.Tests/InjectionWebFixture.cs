@@ -48,6 +48,27 @@ public sealed class InjectionWebFixture : IAsyncLifetime
             await ctx.Response.WriteAsync("{\"a\":1}");
         });
 
+        // 模拟静态文件中间件的 304 行为：带 If-None-Match 就不再返回响应体
+        app.MapGet("/web/conditional/index.html", async ctx =>
+        {
+            if (ctx.Request.Headers.IfNoneMatch.Count > 0)
+            {
+                ctx.Response.StatusCode = StatusCodes.Status304NotModified;
+                return;
+            }
+
+            ctx.Response.ContentType = "text/html; charset=utf-8";
+            ctx.Response.Headers.ETag = "\"v1\"";
+            await ctx.Response.WriteAsync("<html><body><div id=\"app\"></div></body></html>");
+        });
+
+        // 模拟反代子路径（BaseUrl）部署：路径里带前缀，PathBase 为空
+        app.MapGet("/jf/web/index.html", async ctx =>
+        {
+            ctx.Response.ContentType = "text/html; charset=utf-8";
+            await ctx.Response.WriteAsync("<html><body></body></html>");
+        });
+
         await app.StartAsync();
         _app = app;
         Client = new HttpClient { BaseAddress = new Uri(app.Urls.First()) };

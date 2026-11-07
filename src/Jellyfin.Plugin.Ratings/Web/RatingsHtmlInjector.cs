@@ -17,13 +17,24 @@ namespace Jellyfin.Plugin.Ratings.Web;
 ///
 /// 为什么不用改磁盘文件：原 README 的「改 index.html」方式在容器/只读 rootfs 下不可用，
 /// 且升级 Jellyfin 会被覆盖。中间件在响应阶段追加一行脚本，零文件写入、随插件启停自动生效。
+///
+/// v1.1.1 修的两个「静默失效」：
+///   1. 浏览器带 If-None-Match / If-Modified-Since 时，静态文件中间件直接回 304（无响应体），
+///      原来看到「非 200」就跳过 —— 于是浏览器一直用缓存里那份不带脚本的 index.html，
+///      插件侧一行日志都没有。现在主动摘掉条件请求头，强制走 200 + 完整 HTML。
+///   2. 命中但没改写的情况（没有 &lt;/body&gt;、状态码非 200）原来完全静默，现在都会留痕，
+///      并在 /Ratings/v1/health 的 indexRequests / patched 里体现。
 /// </summary>
 public sealed class RatingsHtmlInjector
 {
     private const string ScriptUrl = "/Ratings/v1/client.js";
     private const string Marker = "data-jellyfin-ratings";
 
+    /// <summary>前几次 index 请求按 Information 记录，之后降到 Debug，避免刷屏。</summary>
+    private const int VerboseRequests = 3;
+
     private static int _loggedActive;
+    private static int _loggedSkipped;
 
     private readonly RequestDelegate _next;
     private readonly ILogger<RatingsHtmlInjector> _logger;
@@ -42,6 +53,10 @@ public sealed class RatingsHtmlInjector
             return;
         }
 
+        var indexNumber = RatingsRuntimeState.IndexRequests + 1;
+        RatingsRuntimeState.MarkIndexRequest(
+            $"{context.Request.Path}{context.Request.QueryString} accept={LogText.Clean(context.Request.Headers.Accept.ToString())}");
+
         var config = ConfigProvider.Current;
         if (!config.EnableWebInjection)
         {
@@ -50,6 +65,9 @@ public sealed class RatingsHtmlInjector
             await _next(context).ConfigureAwait(false);
             return;
         }
+
+        // 条件请求头会让静态文件中间件回 304，注入永远没机会执行
+        var wasConditional = RemoveConditionalHeaders(context.Request);
 
         var originalBody = context.Response.Body;
         using var buffer = new MemoryStream();
@@ -61,6 +79,16 @@ public sealed class RatingsHtmlInjector
 
             if (context.Response.StatusCode != StatusCodes.Status200OK || buffer.Length == 0)
             {
+                if (Interlocked.Increment(ref _loggedSkipped) <= VerboseRequests)
+                {
+                    _logger.LogWarning(
+                        "[Ratings] index.html 未注入：状态码 {Status}，响应 {Length} 字节（条件请求={Conditional}），路径 {Path}",
+                        context.Response.StatusCode,
+                        buffer.Length,
+                        wasConditional,
+                        LogText.Clean(context.Request.Path.ToString()));
+                }
+
                 await CopyBackAsync(buffer, originalBody, context).ConfigureAwait(false);
                 return;
             }
@@ -81,7 +109,8 @@ public sealed class RatingsHtmlInjector
                 }
             }
 
-            var patched = Patch(html, context.Request);
+            var originalBytes = Encoding.UTF8.GetByteCount(html);
+            var patched = Patch(html, context.Request, out var reason);
             context.Response.Headers.Remove("Content-Encoding");
             context.Response.Headers.Remove("Content-Length");
 
@@ -90,9 +119,29 @@ public sealed class RatingsHtmlInjector
             context.Response.Body = originalBody;
             await originalBody.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);
 
-            RatingsRuntimeState.MarkInjectionActive();
+            if (reason == "ok")
+            {
+                RatingsRuntimeState.MarkInjectionActive();
+                RatingsRuntimeState.MarkPatched();
+            }
+            else if (reason == "no-body-tag")
+            {
+                _logger.LogWarning(
+                    "[Ratings] index.html 里没有 </body>，无法注入（宿主 Web 客户端结构可能已改版）");
+            }
 
-            if (Interlocked.Exchange(ref _loggedActive, 1) == 0)
+            if (indexNumber <= VerboseRequests)
+            {
+                _logger.LogInformation(
+                    "[Ratings] index.html 请求 #{Index} 路径 {Path}：注入结果 {Reason}（原 {Original} 字节 → 新 {PatchedLength} 字节）",
+                    indexNumber,
+                    LogText.Clean(context.Request.Path.ToString()),
+                    reason,
+                    originalBytes,
+                    bytes.Length);
+            }
+
+            if (reason == "ok" && Interlocked.Exchange(ref _loggedActive, 1) == 0)
             {
                 _logger.LogInformation(
                     "[Ratings] 脚本注入已生效：宿主 {ServerVersion}",
@@ -121,28 +170,95 @@ public sealed class RatingsHtmlInjector
         await buffer.CopyToAsync(target, context.RequestAborted).ConfigureAwait(false);
     }
 
-    private string Patch(string html, HttpRequest request)
+    /// <summary>
+    /// 摘掉条件请求头，让静态文件中间件返回 200 而不是 304。
+    /// </summary>
+    /// <returns>是否真的摘掉了东西（用于诊断日志）。</returns>
+    private static bool RemoveConditionalHeaders(HttpRequest request)
+    {
+        var headers = request.Headers;
+        var removed = false;
+
+        foreach (var name in ConditionalHeaders)
+        {
+            if (headers.ContainsKey(name))
+            {
+                headers.Remove(name);
+                removed = true;
+            }
+        }
+
+        return removed;
+    }
+
+    private static readonly string[] ConditionalHeaders =
+    {
+        "If-None-Match",
+        "If-Modified-Since",
+        "If-Range",
+        "If-Match",
+        "If-Unmodified-Since",
+        "Range"
+    };
+
+    private string Patch(string html, HttpRequest request, out string reason)
     {
         if (html.Contains(Marker, StringComparison.Ordinal))
         {
+            // 上游已经带过标签（例如另一个中间件、或者反向代理改写过），没必要重复注入
+            reason = "already-present";
             return html;
         }
 
         var index = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
         if (index < 0)
         {
+            reason = "no-body-tag";
             return html;
         }
 
-        var pathBase = request.PathBase.HasValue ? request.PathBase.Value : string.Empty;
-
         // PathBase 可能来自反向代理透传的头部（如 X-Forwarded-Prefix），
         // 直接拼进 HTML 属性会被闭合引号注入脚本，这里统一做 HTML 编码。
-        var src = HtmlEncoder.Default.Encode(pathBase + ScriptUrl);
+        var src = HtmlEncoder.Default.Encode(ResolveScriptUrl(request));
         var tag = $"<script {Marker}=\"true\" src=\"{src}\" defer></script>";
 
         _logger.LogDebug("[Ratings] 已注入客户端脚本: {Tag}", LogText.Clean(tag));
+        reason = "ok";
         return html.Insert(index, tag + Environment.NewLine);
+    }
+
+    /// <summary>
+    /// 计算脚本地址。Jellyfin 的 BaseUrl 映射（app.Map(BaseUrl, ...)）发生在更靠后的管道里，
+    /// 本中间件是最外层，此时路径里还带着前缀（/jellyfin/web/index.html），PathBase 是空的。
+    /// 只拼 PathBase 会让反代/子路径部署拿到 /Ratings/v1/client.js 这种错地址（404 → 页面无评分）。
+    /// </summary>
+    private static string ResolveScriptUrl(HttpRequest request)
+    {
+        var path = request.Path.Value ?? "/";
+        var prefix = request.PathBase.HasValue ? request.PathBase.Value!.TrimEnd('/') : string.Empty;
+
+        var tail = IndexOfSuffix(path, "/web/index.html");
+        if (tail < 0)
+        {
+            tail = IndexOfSuffix(path, "/index.html");
+        }
+
+        if (tail > 0)
+        {
+            prefix += path.Substring(0, tail);
+        }
+
+        return prefix + ScriptUrl;
+    }
+
+    private static int IndexOfSuffix(string path, string suffix)
+    {
+        if (!path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return -1;
+        }
+
+        return path.Length - suffix.Length;
     }
 
     private static bool IsIndexRequest(HttpRequest request)
