@@ -1,0 +1,41 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore Jellyfin.Plugin.Ratings.sln
+
+      - name: Build (net9.0 + net10.0)
+        run: dotnet build Jellyfin.Plugin.Ratings.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Jellyfin.Plugin.Ratings.sln -c Release --no-build --logger "console;verbosity=normal"
+
+      - name: Package plugin zips
+        run: bash build.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-packages
+          path: dist/*.zip
+          if-no-files-found: error

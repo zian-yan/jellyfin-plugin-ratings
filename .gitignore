@@ -1,0 +1,21 @@
+# 在 Windows 上同时忽略双目标产物
+bin/
+obj/
+dist/
+
+# 旧的用户脚本构建中间产物
+*.user.js.bak
+
+# 测试与覆盖率产物
+TestResults/
+coverage/
+*.trx
+
+# 编辑器 / 系统
+.vs/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地工作记忆（保留在磁盘，不入库）
+.workbuddy/

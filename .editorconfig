@@ -1,0 +1,35 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{js,html,css}]
+indent_size = 4
+
+[*.cs]
+# --- 现代 C# 风格 ---
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_prefer_braces = true:suggestion
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_require_accessibility_modifiers = always:warning
+
+# --- 可空与现代化检查 ---
+dotnet_diagnostic.CA2007.severity = none      # 库代码不强制 ConfigureAwait
+dotnet_diagnostic.CA1848.severity = none      # 允许直接使用 ILogger.LogXxx
+dotnet_diagnostic.CA1031.severity = none      # 允许捕获 Exception（插件需绝对兜底）
+dotnet_diagnostic.SA1101.severity = none      # 插件代码不强制 this. 前缀

@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    插件主工程：双目标 net9.0 (Jellyfin 10.11) / net10.0 (Jellyfin 12)。
+    LangVersion / Nullable / 版本号等公共属性来自仓库根目录 Directory.Build.props，
+    Jellyfin 包版本来自其中的 $(JellyfinAbi10Version) / $(JellyfinAbi12Version)。
+  -->
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <RootNamespace>Jellyfin.Plugin.Ratings</RootNamespace>
+    <AssemblyName>Jellyfin.Plugin.Ratings</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- Jellyfin 10.11 -> net9.0 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinAbi10Version)">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinAbi10Version)">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- Jellyfin 12.x -> net10.0 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinAbi12Version)">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinAbi12Version)">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 提供商 logo：assets/logo 是唯一来源，编译期嵌入，避免插件目录只读或路径问题 -->
+    <EmbeddedResource Include="..\..\assets\logo\*.png"
+                      LogicalName="Jellyfin.Plugin.Ratings.Web.logos.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Web\client\ratings-client.js"
+                      LogicalName="Jellyfin.Plugin.Ratings.Web.client.ratings-client.js" />
+    <EmbeddedResource Include="Configuration\configPage.html"
+                      LogicalName="Jellyfin.Plugin.Ratings.Configuration.configPage.html" />
+  </ItemGroup>
+
+</Project>

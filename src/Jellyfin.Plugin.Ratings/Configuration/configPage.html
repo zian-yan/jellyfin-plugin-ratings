@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <title>Ratings</title>
+</head>
+<body>
+<div id="RatingsConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="ratingsConfigForm">
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">数据源凭据</h2>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="MdbListApiKey">MDBList API Key</label>
+                        <input id="MdbListApiKey" type="password" is="emby-input" autocomplete="off" />
+                        <div class="fieldDescription">
+                            在多来源评分中占绝大部分权重，未填写时只能拿到 TMDb 单集/整剧评分。
+                            申请地址：<a href="https://mdblist.com/preferences" target="_blank" rel="noopener">mdblist.com/preferences</a>
+                        </div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="TmdbApiKey">TMDb API Key</label>
+                        <input id="TmdbApiKey" type="password" is="emby-input" autocomplete="off" />
+                        <div class="fieldDescription">
+                            用于单集/单季评分，以及把 TMDb ID 反查成 IMDb ID。
+                        </div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="KinopoiskApiKey">Kinopoisk API Key（可选）</label>
+                        <input id="KinopoiskApiKey" type="password" is="emby-input" autocomplete="off" />
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">启用的数据源</h2>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableMdbList" />
+                        <span>MDBList（IMDb / 烂番茄 / Metacritic / Trakt / Letterboxd / MAL）</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableTmdb" />
+                        <span>TMDb（单集、单季评分）</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableAniList" />
+                        <span>AniList（番剧）</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableKinopoisk" />
+                        <span>Kinopoisk</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableDouban" />
+                        <span>豆瓣（需服务器能访问 movie.douban.com）</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableAllocine" />
+                        <span>AlloCiné（法国）</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableCertifications" />
+                        <span>认证角标（烂番茄新鲜认证 / 观众认证 / Metacritic 必看）</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableEpisodeRatings" />
+                        <span>分集页面只显示该集 TMDb 评分</span>
+                    </label>
+                </div>
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">展示</h2>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="HideBuiltInRatings" />
+                        <span>用外部评分替换 Jellyfin 内置星级</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="ShowSourceTooltip" />
+                        <span>悬停显示「来源: 分数」提示</span>
+                    </label>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="MaxRatingsPerItem">最多显示来源数</label>
+                        <input id="MaxRatingsPerItem" type="number" min="1" max="20" is="emby-input" />
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">运行参数</h2>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="CacheMinutes">缓存时长（分钟，0 表示不缓存）</label>
+                        <input id="CacheMinutes" type="number" min="0" max="43200" is="emby-input" />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="TimeoutSeconds">单次外部请求超时（秒）</label>
+                        <input id="TimeoutSeconds" type="number" min="2" max="60" is="emby-input" />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="HttpProxy">HTTP 代理（可选）</label>
+                        <input id="HttpProxy" type="text" is="emby-input" placeholder="http://127.0.0.1:7890" />
+                        <div class="fieldDescription">留空表示直连。适用于服务器无法直接访问豆瓣 / AlloCiné 的地区。</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="FailureThreshold">连续失败阈值（次）</label>
+                        <input id="FailureThreshold" type="number" min="1" max="20" is="emby-input" />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="CooldownMinutes">失败冷却时长（分钟）</label>
+                        <input id="CooldownMinutes" type="number" min="1" max="1440" is="emby-input" />
+                    </div>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="EnableWebInjection" />
+                        <span>自动向前端页面注入评分脚本</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="RequireAuthentication" />
+                        <span>API 需要登录态（未登录用户看不到评分）</span>
+                    </label>
+                    <label class="checkboxContainer">
+                        <input type="checkbox" is="emby-checkbox" id="ExposeErrors" />
+                        <span>接口响应中返回错误摘要（排障用）</span>
+                    </label>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                        <span>保存</span>
+                    </button>
+                </div>
+
+                <div class="fieldDescription" style="margin-top:1em">
+                    诊断接口：<a id="ratingsHealthLink" href="#" target="_blank" rel="noopener">/Ratings/v1/health</a>
+                    —— 可查看注入是否生效、缓存条数与各数据源健康状态。
+                </div>
+
+            </form>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            'use strict';
+
+            var pluginId = '7f1e5b2a-9c3d-4e8b-a1f6-2d4c6b8e9a10';
+
+            var textFields = {
+                MdbListApiKey: '',
+                TmdbApiKey: '',
+                KinopoiskApiKey: '',
+                HttpProxy: ''
+            };
+
+            var numberFields = {
+                MaxRatingsPerItem: 6,
+                CacheMinutes: 720,
+                TimeoutSeconds: 8,
+                FailureThreshold: 3,
+                CooldownMinutes: 10
+            };
+
+            var boolFields = [
+                'EnableMdbList', 'EnableTmdb', 'EnableAniList', 'EnableKinopoisk',
+                'EnableDouban', 'EnableAllocine', 'EnableCertifications', 'EnableEpisodeRatings',
+                'HideBuiltInRatings', 'ShowSourceTooltip', 'EnableWebInjection',
+                'RequireAuthentication', 'ExposeErrors'
+            ];
+
+            function el(id) {
+                return document.getElementById(id);
+            }
+
+            function setHealthLink() {
+                var link = el('ratingsHealthLink');
+                if (!link) {
+                    return;
+                }
+                var base = (window.ApiClient && window.ApiClient.getUrl)
+                    ? window.ApiClient.getUrl('Ratings/v1/health')
+                    : '/Ratings/v1/health';
+                link.href = base;
+                link.textContent = base;
+            }
+
+            function loadConfig() {
+                if (!window.ApiClient) {
+                    return;
+                }
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    Object.keys(textFields).forEach(function (key) {
+                        el(key).value = config[key] || textFields[key];
+                    });
+                    Object.keys(numberFields).forEach(function (key) {
+                        var value = config[key];
+                        el(key).value = (value === undefined || value === null) ? numberFields[key] : value;
+                    });
+                    boolFields.forEach(function (key) {
+                        el(key).checked = config[key] !== false;
+                    });
+                    // 默认关闭的开关按配置值走
+                    if (config.EnableAniList === undefined) { el('EnableAniList').checked = false; }
+                    if (config.EnableKinopoisk === undefined) { el('EnableKinopoisk').checked = false; }
+                    if (config.EnableDouban === undefined) { el('EnableDouban').checked = false; }
+                    if (config.EnableAllocine === undefined) { el('EnableAllocine').checked = false; }
+                    if (config.EnableCertifications === undefined) { el('EnableCertifications').checked = false; }
+                    if (config.RequireAuthentication === undefined) { el('RequireAuthentication').checked = false; }
+                    Dashboard.hideLoadingMsg();
+                });
+            }
+
+            function saveConfig(event) {
+                event.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    Object.keys(textFields).forEach(function (key) {
+                        config[key] = el(key).value.trim();
+                    });
+                    Object.keys(numberFields).forEach(function (key) {
+                        var parsed = parseInt(el(key).value, 10);
+                        config[key] = isNaN(parsed) ? numberFields[key] : parsed;
+                    });
+                    boolFields.forEach(function (key) {
+                        config[key] = el(key).checked;
+                    });
+                    ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+                return false;
+            }
+
+            function init() {
+                setHealthLink();
+                loadConfig();
+                var form = el('ratingsConfigForm');
+                if (form) {
+                    form.addEventListener('submit', saveConfig);
+                }
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+            } else {
+                init();
+            }
+
+            document.addEventListener('pageshow', init);
+        })();
+    </script>
+</div>
+</body>
+</html>
