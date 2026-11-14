@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/zian-yan/jellyfin-plugin-ratings/main/assets/icon.png",
     "versions": [
       {
+        "version": "1.2.4.0",
+        "changelog": "- 修复：TMDb 分数的量纲换算错误，评分 ≤ 1.0 的影片会被显示成放大 10 倍的数字。\n- 修复：分集页在拿不到该集分数时（只配 MDBList、或该集暂无票数），整剧 TMDb 分会冒充该集分数显示。\n- 修复：某个用户中途关掉页面会把正在抓取的同一部片从其他用户的请求里一并取消（进而 500，且不写缓存）。\n- 修复：MDBList 触发 429 限流时被当成数据源故障，连续几次就会让整个来源冷却十分钟。\n- 修复：并发刷新与后台补全同时写缓存时，晚到的旧数据可能覆盖新数据。\n- 修复：MDBList 的观众分多一种来源名（`tomatoesaudience`）时整条丢失。\n- 优化：缓存失效跟随插件版本，升级后不会再拿旧语义的缓存；数值解析固定用 invariant 格式。\n- 优化：匿名健康检查接口也纳入限流，且不再回显其他请求的查询串。",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/zian-yan/jellyfin-plugin-ratings/releases/download/v1.2.4/ratings-1.2.4.0-jf12.zip",
+        "checksum": "30282b17060ee77dcdefe1295237c6db",
+        "timestamp": "2026-11-14T09:07:20Z"
+      },
+      {
         "version": "1.2.3.0",
         "changelog": "- 修复：详情页从不显示 TMDb 评分——MDBList 返回的 tmdb 分数被丢弃，电影与剧集页始终缺这一个来源。\n- 优化：分集页优先显示该集 TMDb 评分，不再与整剧分重复出现两个 TMDb 图标。\n- 优化：配置页的来源列表补上 TMDb，「单集/整剧」改为更准确的「分集 / 分季」。",
         "targetAbi": "12.0.0.0",
