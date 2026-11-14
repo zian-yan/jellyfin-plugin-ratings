@@ -59,7 +59,7 @@ public sealed class TmdbSource : IRatingSource
 
         if (!response.Ok)
         {
-            return SourceResult.Failed($"tmdb: HTTP {response.Status} {response.Error}".Trim());
+            return SourceResult.Failed($"tmdb: HTTP {response.Status} {response.Error}".Trim(), response.Status);
         }
 
         try
@@ -84,7 +84,7 @@ public sealed class TmdbSource : IRatingSource
                 return SourceResult.Empty();
             }
 
-            var entry = RatingEntry.Create($"TMDb ({label})", Logos.Tmdb, average, 10, null, 15);
+            var entry = RatingEntry.Create($"TMDb ({label})", Logos.Tmdb, average, 10, null, 15, label.ToLowerInvariant());
             entry.Display = average.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
 
             var result = new SourceResult();

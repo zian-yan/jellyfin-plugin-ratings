@@ -29,7 +29,17 @@ public sealed class RatingEntry
     /// <summary>Gets or sets 展示顺序，越小越靠前。</summary>
     public int Order { get; set; } = 100;
 
-    public static RatingEntry Create(string source, string logo, double? value, int? scale, string? url = null, int order = 100)
+    /// <summary>Gets or sets 评分归属层级（show / season / episode），用于分集页剔除整剧级同源评分。</summary>
+    public string? Scope { get; set; }
+
+    public static RatingEntry Create(
+        string source,
+        string logo,
+        double? value,
+        int? scale,
+        string? url = null,
+        int order = 100,
+        string? scope = null)
     {
         return new RatingEntry
         {
@@ -41,7 +51,8 @@ public sealed class RatingEntry
                 ? string.Empty
                 : value.Value.ToString(scale is 100 or 5 ? "0.#" : "0.0", CultureInfo.InvariantCulture),
             Url = url,
-            Order = order
+            Order = order,
+            Scope = scope
         };
     }
 }
@@ -138,9 +149,17 @@ public sealed class RatingQuery
         return trimmed;
     }
 
+    /// <summary>
+    /// 缓存键前缀带插件版本：升级后旧缓存的语义（例如「没有 TMDb 分」）自动失效，
+    /// 不必等 TTL 到期，也不会让用户误以为修复没生效。
+    /// </summary>
+    private static readonly string CacheSchema =
+        "v" + (typeof(RatingQuery).Assembly.GetName().Version?.ToString(3) ?? "0");
+
     public string CacheKey()
     {
         var sb = new StringBuilder();
+        sb.Append(CacheSchema).Append('|');
         sb.Append(MediaType).Append('|');
         sb.Append(TmdbId ?? "-").Append('|');
         sb.Append(ImdbId ?? "-").Append('|');

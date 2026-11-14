@@ -13,13 +13,8 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Ratings.Core;
 
 /// <summary>
-/// 评分聚合器。替代原脚本中散落在浏览器端的 fetch + 代理逻辑：
-/// 统一调度、并行抓取、单点缓存、单源失败隔离与健康度熔断都在这里完成。
-///
-/// 时序（针对首次加载慢做了三处调整）：
-///   Wave 0 - TMDb external_ids 补 IMDb ID（与 Wave 1 并行，不再串行等待）
-///   Wave 1 - MDBList 主数据（优先用 TMDb ID，本身不依赖 IMDb ID）
-///   Wave 2 - 需要 IMDb ID / 标题年份的增强源并行；超过宽限期则先返回已有结果
+/// 评分聚合器：并行抓取、单点缓存、单源失败隔离与健康度熔断。
+/// 分三段推进——补 IMDb ID（Wave 0）、MDBList 主数据（Wave 1）、增强源（Wave 2，超出宽限期先返回已有结果）。
 /// </summary>
 public sealed class RatingAggregator
 {
@@ -88,51 +83,42 @@ public sealed class RatingAggregator
             return stale;
         }
 
-        // 同一个条目被并发打开（多人同时浏览、前端重复扫描）时只发一轮外部请求
+        // 同一个条目被并发打开（多人同时浏览、前端重复扫描）时只发一轮外部请求。
+        // 共享任务用 CancellationToken.None 跑：某个调用方取消或关页，不该把其他人的结果一起打断
+        return await AwaitSharedAsync(query, config, key).WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>取得（或加入）该条目正在进行的那次抓取。</summary>
+    private async Task<RatingsResponse> AwaitSharedAsync(RatingQuery query, PluginConfiguration config, string key)
+    {
         var lazy = _inFlight.GetOrAdd(
             key,
             _ => new Lazy<Task<RatingsResponse>>(
-                () => BuildAsync(query, config, key, cancellationToken),
+                () => BuildAsync(query, config, key, CancellationToken.None),
                 LazyThreadSafetyMode.ExecutionAndPublication));
 
-        try
-        {
-            return await lazy.Value.ConfigureAwait(false);
-        }
-        finally
-        {
-            ReleaseInFlight(key, lazy);
-        }
+        // 占位只在任务真正结束后摘除：等待方取消就摘，会让后来者以为没人抓过而重复请求
+        _ = lazy.Value.ContinueWith(
+            _ => ReleaseInFlight(key, lazy),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        return await lazy.Value.ConfigureAwait(false);
     }
 
     /// <summary>
     /// 后台刷新过期缓存。不占用调用方请求，失败也不影响已经返回的旧数据。
-    /// 使用 CancellationToken.None：前端刷新/切页取消请求时，刷新不应该被一并取消。
     /// </summary>
     private async Task RevalidateAsync(RatingQuery query, PluginConfiguration config, string key)
     {
-        Lazy<Task<RatingsResponse>>? lazy = null;
-
         try
         {
-            lazy = _inFlight.GetOrAdd(
-                key,
-                _ => new Lazy<Task<RatingsResponse>>(
-                    () => BuildAsync(query, config, key, CancellationToken.None),
-                    LazyThreadSafetyMode.ExecutionAndPublication));
-
-            await lazy.Value.ConfigureAwait(false);
+            await AwaitSharedAsync(query, config, key).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "[Ratings] 后台刷新失败: {Key}", key);
-        }
-        finally
-        {
-            if (lazy is not null)
-            {
-                ReleaseInFlight(key, lazy);
-            }
         }
     }
 
@@ -214,21 +200,16 @@ public sealed class RatingAggregator
                 }
             }
 
-            // ---- 单集 / 单季：只展示该集(季) TMDb 评分，与原脚本一致 ----
+            // ---- 分集 / 分季：只展示该集(季) 的 TMDb 评分，与原脚本一致 ----
             if (episodeOnly)
             {
                 if (episodeTask is not null)
                 {
-                    var episodeResult = await episodeTask.ConfigureAwait(false);
-                    MergeResult(response, episodeResult, config);
-
-                    // MDBList 是按整剧（show）取的，它带的 TMDb 分是整剧分；
-                    // 分集页已经有该集分数时，让整剧分让位，避免同一个 TMDb 图标出现两次
-                    if (episodeResult.Ratings.Count > 0)
-                    {
-                        response.Ratings.RemoveAll(entry => string.Equals(entry.Source, "TMDb", StringComparison.OrdinalIgnoreCase));
-                    }
+                    MergeResult(response, await episodeTask.ConfigureAwait(false), config);
                 }
+
+                // MDBList 的 TMDb 是整剧级：拿不到该集分数时它会冒充该集分数，一律剔除
+                StripShowLevelRatings(response);
 
                 if (response.Ratings.Count > 0)
                 {
@@ -378,6 +359,17 @@ public sealed class RatingAggregator
             TaskScheduler.Default);
     }
 
+    /// <summary>
+    /// 剔除整剧级评分（目前只有 MDBList 的 TMDb 会带这个标记）。
+    /// 分集页只认该集分数：整剧分既可能与该集分重复，也可能在拿不到集分时冒充它。
+    /// </summary>
+    public static void StripShowLevelRatings(RatingsResponse response)
+    {
+        response.Ratings.RemoveAll(entry =>
+            string.Equals(entry.Logo, Logos.Tmdb, StringComparison.Ordinal)
+            && string.Equals(entry.Scope, "show", StringComparison.Ordinal));
+    }
+
     private RatingsResponse Finish(
         RatingsResponse response,
         PluginConfiguration config,
@@ -473,7 +465,12 @@ public sealed class RatingAggregator
         try
         {
             var result = await source.FetchAsync(query, context, cancellationToken).ConfigureAwait(false);
-            _health.Report(source.Key, result.Success, context.Config.FailureThreshold, context.Config.CooldownMinutes, _logger);
+
+            // 429 是配额限流，不是源坏了：计入熔断会让一次集体刷新就把整个源冷却十分钟
+            if (result.HttpStatus != 429)
+            {
+                _health.Report(source.Key, result.Success, context.Config.FailureThreshold, context.Config.CooldownMinutes, _logger);
+            }
 
             _logger.LogDebug(
                 "[Ratings] {Source} 完成 {Count} 条，{Elapsed}ms，error={Error}",

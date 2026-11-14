@@ -6,8 +6,8 @@
 
 ## 核心功能
 
-- **多来源评分聚合**：MDBList（IMDb、烂番茄、Popcornmeter、Metacritic、Trakt、Letterboxd、MyAnimeList）、TMDb、AniList、Kinopoisk、豆瓣、AlloCiné。
-- **单集 / 单季评分**：从 `Episode` / `Season` 回溯到 `Series` 取 TMDb ID，按季集号定位，只显示该集评分。
+- **多来源评分聚合**：MDBList（IMDb、TMDb、烂番茄、Popcornmeter、Metacritic、Trakt、Letterboxd、MyAnimeList）、TMDb、AniList、Kinopoisk、豆瓣、AlloCiné。
+- **分集 / 分季评分**：从 `Episode` / `Season` 回溯到 `Series` 取 TMDb ID，按季集号定位，只显示该集评分。
 - **认证角标**：烂番茄「新鲜认证 / 观众认证」、Metacritic「必看」替换为认证版图标。
 - **服务端缓存与并发去重**：默认缓存 720 分钟，内存 + 磁盘双层（重启不丢），同一部片多人同时打开只发一轮请求；过期后先返回旧值再后台刷新，定时任务每 6 小时清理超期项。
 - **首屏不闪旧评分**：进入详情页立刻占位，取到外部评分再渲染，不会出现「先显示 Jellyfin 原始评分、几秒后被替换」的跳变；同一会话内回看直接预渲染。

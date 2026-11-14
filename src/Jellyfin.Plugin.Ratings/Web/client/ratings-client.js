@@ -1,20 +1,11 @@
 /*
  * Jellyfin Ratings 客户端脚本（服务端插件版）
- * ---------------------------------------------------------------
- * 与旧版用户脚本的区别：
- *   - 不再在浏览器里直连 MDBList / TMDb / 豆瓣，也不再依赖公共 CORS 代理；
- *   - API Key、代理、缓存全部留在服务端，浏览器只发一个同源请求；
- *   - 只做「取数 → 渲染 → 隐藏内置星级」，逻辑尽量短，降低被 Jellyfin 前端改版打断的概率。
+ * 只做「取数 → 渲染 → 隐藏内置评分」：数据来自同源 /Ratings/v1，密钥与缓存都在服务端。
  *
- * v1.2.2 的锚点策略（参考 Jellyfin.Plugin.MDBList_Ratings 的做法）：
- *   Jellyfin Web 会把**旧页面留在 DOM 里并隐藏**，所以 `.itemMiscInfo-primary` 第一个命中的
- *   往往是隐藏页（甚至是上一部片的残留）。只按选择器取第一个 + 全局隐藏内置评分，
- *   就会出现「原始评分被隐了、插件评分插进了看不见的盒子」。
- *   现在：
- *     1. 只在「可见 **且** 含内置评分元素（starRatingContainer / mediaInfoCriticRating）」的盒子里工作；
- *     2. 隐藏内置评分的作用域就是那个盒子，不再全局乱隐；
- *     3. 容器带 mediaInfoItem 类（继承 Jellyfin 自己的间距样式）+ data-jf-itemid（幂等）；
- *     4. 监听 viewshow / pageshow / hashchange / popstate + MutationObserver（无条件防抖重扫）。
+ * 锚点策略：Jellyfin Web 会把旧页面留在 DOM 里并隐藏，只按选择器取第一个会命中隐藏页（甚至是上一部片的残留）。
+ *   1. 只在「可见且含内置评分元素」的盒子里工作；
+ *   2. 隐藏内置评分的作用域限定在那个盒子，不全局乱隐；
+ *   3. 容器带 data-jf-itemid 幂等，并监听 viewshow / pageshow / hashchange / popstate + MutationObserver。
  */
 (function () {
     'use strict';
@@ -24,7 +15,8 @@
     }
     window.__jellyfinRatingsLoaded = true;
 
-    var VERSION = '1.2.2';
+    // 兜底版本号：拿到 /v1/config 后用服务端 PluginVersion 覆盖，避免脚本内常量与插件版本漂移
+    var VERSION = '1.2.4';
     var API = 'Ratings/v1';
     var CONTAINER_CLASS = 'jf-ratings-container';
     var HIDE_SOFT_CLASS = 'jf-hide-soft';
@@ -211,6 +203,9 @@
             .then(function (response) { return response.ok ? response.json() : {}; })
             .then(function (config) {
                 state.config = config || {};
+                if (state.config.pluginVersion) {
+                    VERSION = state.config.pluginVersion;
+                }
                 return state.config;
             })
             .catch(function () {

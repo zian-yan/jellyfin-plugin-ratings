@@ -37,9 +37,13 @@ public sealed class SourceResult
 
     public string? Error { get; set; }
 
+    /// <summary>Gets or sets 上游 HTTP 状态码，用于区分「配额限流 429」与「源真的坏了」。</summary>
+    public int? HttpStatus { get; set; }
+
     public bool Success { get; set; } = true;
 
-    public static SourceResult Failed(string error) => new() { Success = false, Error = error };
+    public static SourceResult Failed(string error, int? httpStatus = null)
+        => new() { Success = false, Error = error, HttpStatus = httpStatus };
 
     public static SourceResult Empty() => new();
 }

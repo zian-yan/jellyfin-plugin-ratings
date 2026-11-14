@@ -36,7 +36,7 @@ public static class Logos
 
 /// <summary>
 /// MDBList 数据源（核心）。原脚本的 8 个评分来源绝大多数来自这一个接口，
-/// 因此未配置它时插件只能提供 TMDb 单集/整剧评分。
+/// 因此未配置它时插件只能提供分集 / 分季页面的 TMDb 评分。
 /// </summary>
 public sealed class MdbListSource : IRatingSource
 {
@@ -73,7 +73,7 @@ public sealed class MdbListSource : IRatingSource
 
         if (!response.Ok)
         {
-            return SourceResult.Failed($"mdblist: HTTP {response.Status} {response.Error}".Trim());
+            return SourceResult.Failed($"mdblist: HTTP {response.Status} {response.Error}".Trim(), response.Status);
         }
 
         try
@@ -115,9 +115,7 @@ public sealed class MdbListSource : IRatingSource
         }
     }
 
-    /// <summary>
-    /// 与用户脚本保持一致的来源 → logo/量纲映射。
-    /// </summary>
+    /// <summary>来源名 → logo / 量纲映射，量纲与各自网站的原始分值一致。</summary>
     private static RatingEntry? Map(string sourceName, double value)
     {
         var key = sourceName.ToLowerInvariant().Replace(' ', '_');
@@ -128,12 +126,14 @@ public sealed class MdbListSource : IRatingSource
             "tomatoes" => value < 60
                 ? RatingEntry.Create("Rotten Tomatoes", Logos.TomatoesRotten, value, 100, null, 20)
                 : RatingEntry.Create("Rotten Tomatoes", Logos.Tomatoes, value, 100, null, 20),
-            "popcorn" or "popcornmeter" => value < 60
+            "popcorn" or "popcornmeter" or "tomatoesaudience" => value < 60
                 ? RatingEntry.Create("Popcornmeter", Logos.AudienceRotten, value, 100, null, 30)
                 : RatingEntry.Create("Popcornmeter", Logos.Audience, value, 100, null, 30),
             "metacritic" => RatingEntry.Create("Metacritic", Logos.Metacritic, value, 100, null, 40),
             "metacriticuser" or "metacritic_user" => RatingEntry.Create("Metacritic User", Logos.MetacriticUser, value, 10, null, 50),
-            "tmdb" => RatingEntry.Create("TMDb", Logos.Tmdb, NormalizeTmdb(value), 10, null, 15),
+
+            // MDBList 的 tmdb 固定是 0-100 量纲（TMDb 8.6 → 86），且只到整剧级
+            "tmdb" => RatingEntry.Create("TMDb", Logos.Tmdb, Math.Clamp(value, 0, 100) / 10, 10, null, 15, "show"),
             "rogerebert" or "roger_ebert" => RatingEntry.Create("Roger Ebert", Logos.RogerEbert, value, 4, null, 60),
             "trakt" => RatingEntry.Create("Trakt", Logos.Trakt, value, 100, null, 70),
             "letterboxd" => RatingEntry.Create("Letterboxd", Logos.Letterboxd, value, 5, null, 80),
@@ -141,12 +141,6 @@ public sealed class MdbListSource : IRatingSource
             _ => null
         };
     }
-
-    /// <summary>
-    /// MDBList 的 tmdb 评分按百分制返回（8.6 分 → 86），其余来源多是原始量纲，
-    /// 因此只有大于 10 的值才折算回 10 分制，避免把 0-10 的值误除。
-    /// </summary>
-    private static double NormalizeTmdb(double value) => value > 10 ? value / 10 : value;
 
     private static string? ReadString(JsonElement element, string name)
     {
@@ -163,26 +157,9 @@ public sealed class MdbListSource : IRatingSource
         };
     }
 
-    private static int? ReadInt(JsonElement element, string name)
-    {
-        if (!element.TryGetProperty(name, out var property))
-        {
-            return null;
-        }
+    private static int? ReadInt(JsonElement element, string name) => (int?)ReadDouble(element, name);
 
-        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var number))
-        {
-            return number;
-        }
-
-        if (property.ValueKind == JsonValueKind.String && int.TryParse(property.GetString(), out var parsed))
-        {
-            return parsed;
-        }
-
-        return null;
-    }
-
+    /// <summary>JSON 数值恒为 invariant 格式，不能交给当前区域解析（de-DE 会把 "8.6" 读成 86）。</summary>
     private static double? ReadDouble(JsonElement element, string name)
     {
         if (!element.TryGetProperty(name, out var property))
@@ -190,16 +167,11 @@ public sealed class MdbListSource : IRatingSource
             return null;
         }
 
-        if (property.ValueKind == JsonValueKind.Number && property.TryGetDouble(out var number))
+        return property.ValueKind switch
         {
-            return number;
-        }
-
-        if (property.ValueKind == JsonValueKind.String && double.TryParse(property.GetString(), out var parsed))
-        {
-            return parsed;
-        }
-
-        return null;
+            JsonValueKind.Number when property.TryGetDouble(out var number) => number,
+            JsonValueKind.String => SourceParse.ToDouble(property.GetString()),
+            _ => null
+        };
     }
 }

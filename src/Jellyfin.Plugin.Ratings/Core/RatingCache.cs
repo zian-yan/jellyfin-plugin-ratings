@@ -194,6 +194,12 @@ public sealed class RatingCache : IDisposable
             return;
         }
 
+        // 后台补全与过期刷新会并发写同一个 key：晚到的旧数据（抓取时间更早）不许覆盖新数据
+        if (_items.TryGetValue(key, out var existing) && existing.Value.FetchedAt > response.FetchedAt)
+        {
+            return;
+        }
+
         var now = DateTimeOffset.UtcNow;
         _items[key] = new RatingCacheEntry
         {

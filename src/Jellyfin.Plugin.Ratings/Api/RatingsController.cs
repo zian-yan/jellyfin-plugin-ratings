@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -242,6 +243,13 @@ public class RatingsController : ControllerBase
     public IActionResult Health()
     {
         var config = ConfigProvider.Current;
+
+        // 未认证分支在鉴权之前就返回，必须在这里补上限流，否则可以无限打
+        if (Throttle(config, "|health") is { } limited)
+        {
+            return limited;
+        }
+
         var authenticated = !config.RequireAuthentication || (User?.Identity?.IsAuthenticated ?? false);
 
         if (!authenticated)
@@ -265,11 +273,6 @@ public class RatingsController : ControllerBase
             };
 
             return Content(JsonSerializer.Serialize(minimal, JsonOptions), "application/json");
-        }
-
-        if (Gate(config) is { } denied)
-        {
-            return denied;
         }
 
         var payload = new
@@ -308,15 +311,18 @@ public class RatingsController : ControllerBase
 
     private static string[] BuildEnabledSources(Configuration.PluginConfiguration config)
     {
-        var sources = new System.Collections.Generic.List<string>(7);
-        if (config.EnableTmdb) { sources.Add("tmdb"); }
-        if (config.EnableMdbList) { sources.Add("mdblist"); }
-        if (config.EnableAniList) { sources.Add("anilist"); }
-        if (config.EnableKinopoisk) { sources.Add("kinopoisk"); }
-        if (config.EnableDouban) { sources.Add("douban"); }
-        if (config.EnableAllocine) { sources.Add("allocine"); }
-        if (config.EnableCertifications) { sources.Add("certifications"); }
-        return sources.ToArray();
+        (string Key, bool Enabled)[] all =
+        {
+            ("tmdb", config.EnableTmdb),
+            ("mdblist", config.EnableMdbList),
+            ("anilist", config.EnableAniList),
+            ("kinopoisk", config.EnableKinopoisk),
+            ("douban", config.EnableDouban),
+            ("allocine", config.EnableAllocine),
+            ("certifications", config.EnableCertifications)
+        };
+
+        return all.Where(source => source.Enabled).Select(source => source.Key).ToArray();
     }
 
     private bool IsAllowed(Configuration.PluginConfiguration config)
@@ -363,7 +369,7 @@ public class RatingsController : ControllerBase
     /// <summary>
     /// 访问闸门：先认证，再限流。返回 null 表示放行。
     ///
-    /// 这两个接口会代替调用方去请求外部 API，匿名开放或无限流都会让 API Key 配额被刷光，
+    /// 查询接口会代替调用方去请求外部 API，匿名开放或无限流都会让 API Key 配额被刷光，
     /// 因此统一收口在这里，而不是每个 action 各写一遍。
     /// </summary>
     private IActionResult? Gate(Configuration.PluginConfiguration config)
@@ -373,7 +379,16 @@ public class RatingsController : ControllerBase
             return Unauthorized(new { error = "authentication required" });
         }
 
-        var clientKey = ClientKey();
+        return Throttle(config);
+    }
+
+    /// <summary>
+    /// 按客户端限流。<paramref name="scope"/> 让诊断接口与数据接口各用一份配额，
+    /// 免得监控轮询把额度吃光、连累详情页。返回 null 表示放行。
+    /// </summary>
+    private IActionResult? Throttle(Configuration.PluginConfiguration config, string scope = "")
+    {
+        var clientKey = ClientKey() + scope;
         if (_throttle.TryAcquire(clientKey, config.RateLimitPerMinute, out var retryAfter))
         {
             return null;

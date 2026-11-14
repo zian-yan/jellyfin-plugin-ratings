@@ -4,6 +4,7 @@ using System.Text.Json;
 using Jellyfin.Plugin.Ratings.Api;
 using Jellyfin.Plugin.Ratings.Configuration;
 using Jellyfin.Plugin.Ratings.Core;
+using Jellyfin.Plugin.Ratings.Sources;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -171,6 +172,21 @@ public class AggregationTests
     }
 
     [Fact]
+    public void CacheDoesNotRegressToOlderData()
+    {
+        using var cache = new RatingCache(null, NullLogger<RatingCache>.Instance);
+        var now = DateTimeOffset.UtcNow;
+
+        cache.Set("k", new RatingsResponse { Title = "new", FetchedAt = now }, 10);
+
+        // 后台补全/过期刷新可能晚到：抓取时间更早的数据不能覆盖已有的新数据
+        cache.Set("k", new RatingsResponse { Title = "old", FetchedAt = now.AddMinutes(-5) }, 10);
+
+        Assert.True(cache.TryGet("k", out var kept));
+        Assert.Equal("new", kept!.Title);
+    }
+
+    [Fact]
     public async Task AggregatorExplainsMissingProviderIds()
     {
         using var http = new RatingsHttp(NullLogger<RatingsHttp>.Instance);
@@ -207,7 +223,65 @@ public class AggregationTests
             Episode = episode is null ? null : int.Parse(episode)
         };
 
-        Assert.Equal(expected, query.CacheKey());
+        // 前缀是插件版本（升级即让旧缓存失效），这里只校验可区分的那一段
+        Assert.EndsWith("|" + expected, query.CacheKey(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(86, 8.6)]
+    [InlineData(9, 0.9)]
+    [InlineData(100, 10)]
+    public void MdbListTmdbValueIsPercentScale(double raw, double expected)
+    {
+        var entry = Assert.IsType<RatingEntry>(MapMdbList("tmdb", raw));
+
+        Assert.Equal(expected, entry.Value!.Value, 3);
+        Assert.Equal(10, entry.Scale);
+        Assert.Equal("show", entry.Scope);
+    }
+
+    [Fact]
+    public void MdbListMapsTomatoesAudienceAlias()
+    {
+        var entry = Assert.IsType<RatingEntry>(MapMdbList("tomatoesaudience", 72));
+
+        Assert.Equal("Popcornmeter", entry.Source);
+        Assert.Equal(72, entry.Value);
+    }
+
+    [Fact]
+    public void ShowLevelTmdbIsStrippedButEpisodeRatingSurvives()
+    {
+        var response = new RatingsResponse();
+        response.Ratings.Add(RatingEntry.Create("IMDb", "IMDb", 8.1, 10, null, 10));
+        response.Ratings.Add(RatingEntry.Create("TMDb", "TMDB", 8.6, 10, null, 15, "show"));
+        response.Ratings.Add(RatingEntry.Create("TMDb (Episode)", "TMDB", 8.2, 10, null, 15, "episode"));
+
+        RatingAggregator.StripShowLevelRatings(response);
+
+        // 整剧分必须让位；该集分、其它来源不受影响
+        var tmdb = Assert.Single(response.Ratings, entry => entry.Logo == "TMDB");
+        Assert.Equal("TMDb (Episode)", tmdb.Source);
+        Assert.Equal(2, response.Ratings.Count);
+    }
+
+    [Fact]
+    public void ShowLevelTmdbIsStrippedEvenWithoutEpisodeRating()
+    {
+        var response = new RatingsResponse();
+        response.Ratings.Add(RatingEntry.Create("IMDb", "IMDb", 8.1, 10, null, 10));
+        response.Ratings.Add(RatingEntry.Create("TMDb", "TMDB", 8.6, 10, null, 15, "show"));
+
+        RatingAggregator.StripShowLevelRatings(response);
+
+        Assert.DoesNotContain(response.Ratings, entry => entry.Logo == "TMDB");
+        Assert.Single(response.Ratings);
+    }
+
+    private static object? MapMdbList(string source, double value)
+    {
+        var map = typeof(MdbListSource).GetMethod("Map", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return map.Invoke(null, new object[] { source, value });
     }
 
     [Fact]

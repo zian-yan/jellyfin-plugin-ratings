@@ -15,15 +15,9 @@ namespace Jellyfin.Plugin.Ratings.Web;
 /// <summary>
 /// 向 Web 客户端 index.html 注入脚本标签的中间件。
 ///
-/// 为什么不用改磁盘文件：原 README 的「改 index.html」方式在容器/只读 rootfs 下不可用，
-/// 且升级 Jellyfin 会被覆盖。中间件在响应阶段追加一行脚本，零文件写入、随插件启停自动生效。
-///
-/// v1.1.1 修的两个「静默失效」：
-///   1. 浏览器带 If-None-Match / If-Modified-Since 时，静态文件中间件直接回 304（无响应体），
-///      原来看到「非 200」就跳过 —— 于是浏览器一直用缓存里那份不带脚本的 index.html，
-///      插件侧一行日志都没有。现在主动摘掉条件请求头，强制走 200 + 完整 HTML。
-///   2. 命中但没改写的情况（没有 &lt;/body&gt;、状态码非 200）原来完全静默，现在都会留痕，
-///      并在 /Ratings/v1/health 的 indexRequests / patched 里体现。
+/// 不改磁盘文件：容器 / 只读 rootfs 下不可写，升级 Jellyfin 也会被覆盖。
+/// 两个必须刻意处理的点：条件请求头会让静态中间件回 304（无响应体，注入永远不执行），所以要主动摘掉；
+/// 没注入成功时必须留痕，否则外部只表现为「页面没有评分」。
 /// </summary>
 public sealed class RatingsHtmlInjector
 {
@@ -54,8 +48,9 @@ public sealed class RatingsHtmlInjector
         }
 
         var indexNumber = RatingsRuntimeState.IndexRequests + 1;
-        RatingsRuntimeState.MarkIndexRequest(
-            $"{context.Request.Path}{context.Request.QueryString} accept={LogText.Clean(context.Request.Headers.Accept.ToString())}");
+
+        // 只记路径：health 匿名可读，别把别人的 query 与请求头带出去
+        RatingsRuntimeState.MarkIndexRequest(LogText.Clean(context.Request.Path.ToString()));
 
         var config = ConfigProvider.Current;
         if (!config.EnableWebInjection)
